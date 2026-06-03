@@ -51,7 +51,7 @@ cat > "$PLIST" <<EOF
     <string>$SCRIPT</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>$REPO</string>
+  <string>$ROOT</string>
   <key>StartInterval</key>
   <integer>$INTERVAL</integer>
   <key>RunAtLoad</key>
