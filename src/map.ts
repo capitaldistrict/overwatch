@@ -97,8 +97,11 @@ const ADSB_SOURCES = {
 } as const;
 
 const FLIGHT_SUMMARIES_URL = publicAssetUrl('adsb/flight-summaries.json');
-const LIVE_REFRESH_MS = 1000;
-const ACCUMULATED_REFRESH_MS = 5 * 60 * 1000;
+const SNAPSHOT_REFRESH_MS = 60 * 1000;
+const DEFAULT_LIVE_REFRESH_MS = 5 * 1000;
+const MIN_ACCUMULATED_REFRESH_MS = 60 * 1000;
+const REFRESH_PREF_KEY = 'overwatch.adsbRefreshPreference';
+const LIVE_REFRESH_OPTIONS_MS = [1000, 5000, 15000, 30000, 60000];
 const PARCEL_IMPACT_SEVERITIES: ParcelImpactSeverity[] = ['low', 'medium', 'elevated', 'subtle', 'unknown'];
 const PARCEL_IMPACT_STYLES: Record<
   ParcelImpactSeverity,
@@ -115,6 +118,12 @@ let selectedFlightFacet = 'all';
 let lastFlightPayload: FlightSummariesPayload | null = null;
 const adsbRefreshStarted = new WeakSet<maplibregl.Map>();
 const parcelOverflightByPin = new Map<string, ParcelOverflightImpact>();
+type AdsbRefreshMode = 'snapshot' | 'live';
+
+let adsbRefreshMode: AdsbRefreshMode = 'snapshot';
+let adsbLiveRefreshMs = DEFAULT_LIVE_REFRESH_MS;
+let liveRefreshTimer: number | undefined;
+let accumulatedRefreshTimer: number | undefined;
 
 export function getParcelOverflightImpact(pin: string | null | undefined): ParcelOverflightImpact | null {
   const normalized = normalizePin(pin);
@@ -521,6 +530,7 @@ function addAdsbLayers(map: maplibregl.Map): void {
 function startAdsbRefresh(map: maplibregl.Map): void {
   if (adsbRefreshStarted.has(map)) return;
   adsbRefreshStarted.add(map);
+  loadRefreshPreference();
 
   const refreshLive = () => {
     void refreshAdsbSources(map);
@@ -528,10 +538,100 @@ function startAdsbRefresh(map: maplibregl.Map): void {
   const refreshAccumulated = () => {
     void refreshAccumulatedAdsbLayer(map);
   };
-  refreshLive();
-  refreshAccumulated();
-  window.setInterval(refreshLive, LIVE_REFRESH_MS);
-  window.setInterval(refreshAccumulated, ACCUMULATED_REFRESH_MS);
+  const applySchedule = () => {
+    window.clearInterval(liveRefreshTimer);
+    window.clearInterval(accumulatedRefreshTimer);
+    const liveRefreshMs = currentLiveRefreshMs();
+    const accumulatedRefreshMs = currentAccumulatedRefreshMs();
+    refreshLive();
+    refreshAccumulated();
+    liveRefreshTimer = window.setInterval(refreshLive, liveRefreshMs);
+    accumulatedRefreshTimer = window.setInterval(refreshAccumulated, accumulatedRefreshMs);
+    renderRefreshControls();
+  };
+
+  setupRefreshControls(applySchedule);
+  applySchedule();
+}
+
+function currentLiveRefreshMs(): number {
+  return adsbRefreshMode === 'live' ? adsbLiveRefreshMs : SNAPSHOT_REFRESH_MS;
+}
+
+function currentAccumulatedRefreshMs(): number {
+  return adsbRefreshMode === 'live'
+    ? Math.max(MIN_ACCUMULATED_REFRESH_MS, adsbLiveRefreshMs)
+    : SNAPSHOT_REFRESH_MS;
+}
+
+function loadRefreshPreference(): void {
+  try {
+    const raw = window.localStorage.getItem(REFRESH_PREF_KEY);
+    if (!raw) return;
+    const payload = JSON.parse(raw) as { mode?: string; liveRefreshMs?: number };
+    adsbRefreshMode = payload.mode === 'live' ? 'live' : 'snapshot';
+    adsbLiveRefreshMs = normalizeRefreshMs(payload.liveRefreshMs);
+  } catch {
+    adsbRefreshMode = 'snapshot';
+    adsbLiveRefreshMs = DEFAULT_LIVE_REFRESH_MS;
+  }
+}
+
+function saveRefreshPreference(): void {
+  try {
+    window.localStorage.setItem(
+      REFRESH_PREF_KEY,
+      JSON.stringify({ mode: adsbRefreshMode, liveRefreshMs: adsbLiveRefreshMs })
+    );
+  } catch {
+    // Preference persistence is optional.
+  }
+}
+
+function normalizeRefreshMs(value: unknown): number {
+  const numeric = Number(value);
+  return LIVE_REFRESH_OPTIONS_MS.includes(numeric) ? numeric : DEFAULT_LIVE_REFRESH_MS;
+}
+
+function setupRefreshControls(applySchedule: () => void): void {
+  const snapshotButton = document.getElementById('adsb-refresh-snapshot') as HTMLButtonElement | null;
+  const liveButton = document.getElementById('adsb-refresh-live') as HTMLButtonElement | null;
+  const rateSelect = document.getElementById('adsb-refresh-rate') as HTMLSelectElement | null;
+  if (!snapshotButton || !liveButton || !rateSelect) return;
+
+  snapshotButton.addEventListener('click', () => {
+    adsbRefreshMode = 'snapshot';
+    saveRefreshPreference();
+    applySchedule();
+  });
+
+  liveButton.addEventListener('click', () => {
+    adsbRefreshMode = 'live';
+    saveRefreshPreference();
+    applySchedule();
+  });
+
+  rateSelect.addEventListener('change', () => {
+    adsbLiveRefreshMs = normalizeRefreshMs(rateSelect.value);
+    if (adsbRefreshMode !== 'live') adsbRefreshMode = 'live';
+    saveRefreshPreference();
+    applySchedule();
+  });
+}
+
+function renderRefreshControls(): void {
+  const snapshotButton = document.getElementById('adsb-refresh-snapshot') as HTMLButtonElement | null;
+  const liveButton = document.getElementById('adsb-refresh-live') as HTMLButtonElement | null;
+  const rateSelect = document.getElementById('adsb-refresh-rate') as HTMLSelectElement | null;
+  if (!snapshotButton || !liveButton || !rateSelect) return;
+
+  const liveSelected = adsbRefreshMode === 'live';
+  snapshotButton.classList.toggle('selected', !liveSelected);
+  liveButton.classList.toggle('selected', liveSelected);
+  snapshotButton.setAttribute('aria-pressed', String(!liveSelected));
+  liveButton.setAttribute('aria-pressed', String(liveSelected));
+  rateSelect.value = String(adsbLiveRefreshMs);
+  rateSelect.disabled = !liveSelected;
 }
 
 async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {

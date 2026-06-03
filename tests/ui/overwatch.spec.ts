@@ -40,6 +40,13 @@ test.describe('desktop layout', () => {
     expect(panelBox.x).toBeGreaterThan(mapBox.x + mapBox.width - 2);
     await expect(handle).toBeHidden();
     await expect(page.getByText('Static site; updates after the next published snapshot.')).toBeVisible();
+    await expect(page.locator('#adsb-refresh-snapshot')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#adsb-refresh-live')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#adsb-refresh-rate')).toBeDisabled();
+
+    await page.locator('#adsb-refresh-live').click();
+    await expect(page.locator('#adsb-refresh-live')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#adsb-refresh-rate')).toBeEnabled();
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);

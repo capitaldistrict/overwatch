@@ -6,8 +6,8 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex" />
     <title>Niskayuna Parcel Viewer</title>
-    <script type="module" crossorigin src="/overwatch/assets/index-DYG0jVyS.js"></script>
-    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-BoN5pExl.css">
+    <script type="module" crossorigin src="/overwatch/assets/index-BKoBuLoN.js"></script>
+    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-BMidTKqP.css">
   </head>
   <body>
     <div id="app">
@@ -39,6 +39,22 @@
             <div class="adsb-live-head">
               <span>Published ADS-B</span>
               <span id="adsb-live-updated">waiting</span>
+            </div>
+            <div class="adsb-refresh-controls" aria-label="ADS-B refresh controls">
+              <div class="adsb-refresh-mode" role="group" aria-label="ADS-B refresh mode">
+                <button id="adsb-refresh-snapshot" type="button" aria-pressed="true">Snapshot 60s</button>
+                <button id="adsb-refresh-live" type="button" aria-pressed="false">Live</button>
+              </div>
+              <label class="adsb-refresh-rate">
+                <span class="sr-only">Live refresh interval</span>
+                <select id="adsb-refresh-rate" aria-label="Live refresh interval">
+                  <option value="1000">1s</option>
+                  <option value="5000" selected>5s</option>
+                  <option value="15000">15s</option>
+                  <option value="30000">30s</option>
+                  <option value="60000">60s</option>
+                </select>
+              </label>
             </div>
             <div id="adsb-live-summary" class="adsb-live-summary">No published aircraft yet.</div>
             <div id="adsb-live-list" class="adsb-live-list"></div>
