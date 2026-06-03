@@ -34,6 +34,17 @@ npm run build:pages
 
 If `VITE_PMTILES_URL` is set, the app loads parcels from that fully qualified PMTiles URL instead of `public/parcels.pmtiles`.
 
+## UI testing
+
+Playwright covers the responsive map shell, mobile drawer states, drag snapping, and parcel-search expansion.
+
+```sh
+npm run test:ui
+npm run test:ui:mobile
+```
+
+The test runner starts its own local Vite server on `127.0.0.1:49173` and stubs external OpenStreetMap tile responses so layout checks are not dependent on public tile availability.
+
 ## ADS-B snapshots
 
 The hosted Pages site is static. It does not talk to dump1090 or third-party ADS-B providers from the browser. Instead, a local collector should periodically refresh `public/adsb/`, rebuild `docs/`, commit the new static snapshot, and push to GitHub Pages.

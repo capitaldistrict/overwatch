@@ -19,6 +19,21 @@ const searchInput = document.getElementById('search') as HTMLInputElement;
 const ownerToggle = document.getElementById('owner-toggle') as HTMLInputElement;
 const resultsEl = document.getElementById('results') as HTMLDivElement;
 const panelEl = document.getElementById('parcel-detail') as HTMLDivElement;
+const mainShell = document.getElementById('main-shell') as HTMLElement;
+const drawerEl = document.getElementById('panel') as HTMLElement;
+const drawerHandle = document.getElementById('drawer-handle') as HTMLButtonElement | null;
+const drawerStateLabel = document.getElementById('drawer-state-label') as HTMLSpanElement | null;
+
+type DrawerState = 'peek' | 'medium' | 'expanded';
+
+const mobileDrawerQuery = window.matchMedia('(max-width: 720px)');
+let drawerState: DrawerState = 'medium';
+let drawerDragStartY = 0;
+let drawerDragStartHeight = 0;
+let drawerDragActive = false;
+let suppressNextDrawerClick = false;
+
+initMobileDrawer();
 
 // --- Search worker -------------------------------------------------------
 
@@ -116,6 +131,7 @@ function selectParcel(hit: SearchHit): void {
   const sourcePin = hit.pin;
   highlightParcel(map, sourcePin);
   renderPanel({ pin: sourcePin, source_pin: sourcePin, parcel_id: sourcePin, address: hit.address, owner: hit.owner });
+  revealDrawerForDetails();
   flyToPin(sourcePin);
   void resolveParcelIdentityFromPin(sourcePin).then((identity) => {
     renderPanel({
@@ -222,6 +238,7 @@ map.on('click', (e) => {
   const sourcePin = (props.pin as string) ?? null;
   highlightParcel(map, sourcePin);
   renderPanel({ ...props, source_pin: sourcePin ?? undefined, parcel_id: sourcePin ?? undefined });
+  revealDrawerForDetails();
   if (sourcePin) {
     void resolveParcelIdentityFromPin(sourcePin).then((identity) => {
       renderPanel({
@@ -242,3 +259,134 @@ map.on('mouseleave', 'parcels-fill', () => {
 });
 
 console.info('Niskayuna Parcel Viewer initialized.');
+
+// --- Mobile drawer ------------------------------------------------------
+
+function initMobileDrawer(): void {
+  if (!drawerHandle) return;
+
+  setDrawerState('medium', { immediate: true });
+
+  drawerHandle.addEventListener('click', () => {
+    if (suppressNextDrawerClick) {
+      suppressNextDrawerClick = false;
+      return;
+    }
+    if (!isMobileDrawer()) return;
+    setDrawerState(nextDrawerState(drawerState));
+  });
+
+  drawerHandle.addEventListener('pointerdown', (event) => {
+    if (!isMobileDrawer()) return;
+    drawerDragActive = true;
+    suppressNextDrawerClick = false;
+    drawerDragStartY = event.clientY;
+    drawerDragStartHeight = drawerEl.getBoundingClientRect().height;
+    drawerEl.dataset.dragging = 'true';
+    drawerHandle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  drawerHandle.addEventListener('pointermove', (event) => {
+    if (!drawerDragActive) return;
+    const delta = drawerDragStartY - event.clientY;
+    if (Math.abs(delta) > 8) suppressNextDrawerClick = true;
+    const { peek, expanded } = getDrawerHeights();
+    const nextHeight = clamp(drawerDragStartHeight + delta, peek, expanded);
+    setDrawerHeight(nextHeight);
+  });
+
+  const endDrag = (event: PointerEvent) => {
+    if (!drawerDragActive) return;
+    drawerDragActive = false;
+    delete drawerEl.dataset.dragging;
+    drawerHandle.releasePointerCapture(event.pointerId);
+    setDrawerState(nearestDrawerState(drawerEl.getBoundingClientRect().height));
+  };
+
+  drawerHandle.addEventListener('pointerup', endDrag);
+  drawerHandle.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', () => setDrawerState(drawerState, { immediate: true }));
+  mobileDrawerQuery.addEventListener('change', () => setDrawerState(drawerState, { immediate: true }));
+}
+
+function revealDrawerForDetails(): void {
+  if (isMobileDrawer()) setDrawerState('expanded');
+}
+
+function isMobileDrawer(): boolean {
+  return mobileDrawerQuery.matches;
+}
+
+function nextDrawerState(current: DrawerState): DrawerState {
+  if (current === 'medium') return 'expanded';
+  if (current === 'expanded') return 'peek';
+  return 'medium';
+}
+
+function nearestDrawerState(height: number): DrawerState {
+  const heights = getDrawerHeights();
+  const candidates: DrawerState[] = ['peek', 'medium', 'expanded'];
+  return candidates.reduce((best, candidate) => {
+    const bestDistance = Math.abs(height - heights[best]);
+    const candidateDistance = Math.abs(height - heights[candidate]);
+    return candidateDistance < bestDistance ? candidate : best;
+  }, 'medium' as DrawerState);
+}
+
+function setDrawerState(state: DrawerState, options: { immediate?: boolean } = {}): void {
+  drawerState = state;
+  mainShell.dataset.drawerState = state;
+  drawerEl.dataset.drawerState = state;
+  drawerEl.style.removeProperty('--drawer-drag-height');
+  setDrawerHeight(getDrawerHeights()[state]);
+
+  if (drawerHandle) {
+    drawerHandle.setAttribute('aria-expanded', String(state === 'expanded'));
+    drawerHandle.setAttribute('aria-label', drawerLabelForState(state));
+    drawerHandle.dataset.drawerState = state;
+  }
+  if (drawerStateLabel) {
+    drawerStateLabel.textContent = drawerVisibleLabelForState(state);
+  }
+
+  const resizeMap = () => map.resize();
+  if (options.immediate) {
+    resizeMap();
+  } else {
+    window.setTimeout(resizeMap, 220);
+  }
+}
+
+function setDrawerHeight(height: number): void {
+  const rounded = `${Math.round(height)}px`;
+  mainShell.style.setProperty('--drawer-overlay-height', rounded);
+  drawerEl.style.setProperty('--drawer-drag-height', rounded);
+}
+
+function getDrawerHeights(): Record<DrawerState, number> {
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const mainHeight = mainShell.getBoundingClientRect().height || viewportHeight;
+  const compact = window.matchMedia('(max-width: 420px)').matches;
+  const peek = clamp(viewportHeight * 0.15, 108, 136);
+  const medium = clamp(viewportHeight * (compact ? 0.32 : 0.35), 210, compact ? 304 : 352);
+  const expanded = Math.max(medium, mainHeight - 52);
+  return { peek, medium, expanded };
+}
+
+function drawerLabelForState(state: DrawerState): string {
+  if (state === 'expanded') return 'Collapse overflight drawer';
+  if (state === 'peek') return 'Open overflight drawer';
+  return 'Expand overflight drawer';
+}
+
+function drawerVisibleLabelForState(state: DrawerState): string {
+  if (state === 'expanded') return 'Drawer fully open';
+  if (state === 'peek') return 'Drawer minimized';
+  return 'Drawer half open';
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}

@@ -10,6 +10,8 @@
     "publish:snapshot": "./scripts/publish_snapshot.sh",
     "publisher:install": "./scripts/install_launchd_publisher.sh 300",
     "publisher:uninstall": "./scripts/uninstall_launchd_publisher.sh",
+    "test:ui": "playwright test",
+    "test:ui:mobile": "playwright test --project=mobile",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -19,6 +21,7 @@
     "pmtiles": "^3.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^20.14.0",
     "typescript": "^5.5.0",
     "vite": "^5.4.0"

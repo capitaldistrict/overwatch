@@ -6,8 +6,8 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex" />
     <title>Niskayuna Parcel Viewer</title>
-    <script type="module" crossorigin src="/overwatch/assets/index-CRngBb8m.js"></script>
-    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-BCCL5C2G.css">
+    <script type="module" crossorigin src="/overwatch/assets/index-Cp-mR46A.js"></script>
+    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-n-hYcWPY.css">
   </head>
   <body>
     <div id="app">
@@ -32,9 +32,9 @@
           <div id="results" role="listbox" aria-label="Search results"></div>
         </div>
       </header>
-      <main>
-        <div id="map-wrap">
-          <div id="map" aria-label="Map of Niskayuna parcels"></div>
+      <main id="main-shell" data-drawer-state="medium">
+        <div id="map-wrap" data-testid="map-wrap">
+          <div id="map" aria-label="Map of Niskayuna parcels" data-testid="map"></div>
           <section id="adsb-live-panel" class="adsb-live-panel" aria-live="polite">
             <div class="adsb-live-head">
               <span>Published ADS-B</span>
@@ -44,7 +44,25 @@
             <div id="adsb-live-list" class="adsb-live-list"></div>
           </section>
         </div>
-        <aside id="panel" aria-live="polite" aria-label="Overflight and parcel details">
+        <aside
+          id="panel"
+          aria-live="polite"
+          aria-label="Overflight and parcel details"
+          data-drawer-state="medium"
+          data-testid="overflight-drawer"
+        >
+          <button
+            id="drawer-handle"
+            class="drawer-handle"
+            type="button"
+            aria-label="Expand overflight drawer"
+            aria-controls="panel"
+            aria-expanded="false"
+            data-testid="drawer-handle"
+          >
+            <span class="drawer-handle-grip" aria-hidden="true"></span>
+            <span id="drawer-state-label" class="sr-only">Drawer half open</span>
+          </button>
           <section id="flight-watch" class="flight-watch">
             <div class="flight-watch-head">
               <div>
