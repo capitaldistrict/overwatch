@@ -1,0 +1,809 @@
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { Protocol } from 'pmtiles';
+import { publicAssetUrl } from './assets';
+
+// Configure the PMTiles URL via env var so we can swap R2/CDN/local without code changes.
+// In dev, default to parcels.pmtiles served from /public.
+const PMTILES_URL =
+  (import.meta.env.VITE_PMTILES_URL as string | undefined)?.trim() || publicAssetUrl('parcels.pmtiles');
+
+const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
+type Sparkline = {
+  times?: Array<string | null>;
+  altitude_ft?: Array<number | null>;
+  speed_kt?: Array<number | null>;
+  property_hits?: Array<number | null>;
+};
+
+type FlightSummary = {
+  track_key: string;
+  label?: string;
+  flight?: string | null;
+  aircraft_hex?: string | null;
+  registration?: string | null;
+  registration_source?: string | null;
+  aircraft_type?: string | null;
+  aircraft_type_description?: string | null;
+  wake_turbulence_category?: string | null;
+  operator_hint?: string | null;
+  aircraft_class?: string | null;
+  area?: string | null;
+  active?: boolean;
+  persisted?: boolean;
+  geobounds_hit?: boolean;
+  property_hits?: number;
+  niskayuna_point_count?: number;
+  corridor_point_count?: number;
+  parcel_match_status?: string | null;
+  first_observed_at?: string | null;
+  last_observed_at?: string | null;
+  first_geobounds_at?: string | null;
+  last_geobounds_at?: string | null;
+  altitude_ft?: number | null;
+  speed_kt?: number | null;
+  track_deg?: number | null;
+  altitude_band_ft?: string | null;
+  point_count?: number;
+  impact_score?: number;
+  sparkline?: Sparkline;
+};
+
+type FlightSummariesPayload = {
+  updated_at?: string;
+  active_count?: number;
+  geobounds_count?: number;
+  property_hit_count?: number;
+  summaries: FlightSummary[];
+};
+
+const ADSB_SOURCES = {
+  aircraft: { id: 'adsb-aircraft-source', url: publicAssetUrl('adsb/live-aircraft.geojson') },
+  trails: { id: 'adsb-trails-source', url: publicAssetUrl('adsb/live-trails.geojson') },
+  corridors: { id: 'adsb-corridors-source', url: publicAssetUrl('adsb/corridor-markers.geojson') },
+  accumulated: { id: 'adsb-accumulated-source', url: publicAssetUrl('adsb/accumulated-corridors.geojson') },
+} as const;
+
+const FLIGHT_SUMMARIES_URL = publicAssetUrl('adsb/flight-summaries.json');
+const LIVE_REFRESH_MS = 1000;
+const ACCUMULATED_REFRESH_MS = 5 * 60 * 1000;
+
+let selectedFlightFacet = 'all';
+let lastFlightPayload: FlightSummariesPayload | null = null;
+
+export function initMap(containerId: string): maplibregl.Map {
+  // Register the pmtiles:// protocol with MapLibre.
+  const protocol = new Protocol();
+  maplibregl.addProtocol('pmtiles', protocol.tile);
+  console.log(`[Map] Registered PMTiles protocol. Loading from: ${PMTILES_URL}`);
+
+  const map = new maplibregl.Map({
+    container: containerId,
+    // Minimal raster basemap. Swap for your own vector style if/when needed.
+    style: {
+      version: 8,
+      sources: {
+        basemap: {
+          type: 'raster',
+          tiles: [
+            'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          ],
+          tileSize: 256,
+          attribution: '\u00a9 OpenStreetMap contributors',
+          maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    },
+    center: [-73.85, 42.82], // Niskayuna approx center
+    zoom: 12,
+    hash: true,
+  });
+
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
+  map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-left');
+
+  map.on('load', () => {
+    console.log('[Map] Loaded. Adding parcels source and layers...');
+    map.addSource('parcels', {
+      type: 'vector',
+      url: `pmtiles://${PMTILES_URL}`,
+    });
+
+    map.on('sourcedata', (e) => {
+      if (e.sourceId === 'parcels' && (e as any).isSourceLoaded) {
+        console.log('[Map] Parcels source loaded successfully.');
+      }
+    });
+
+    map.addLayer({
+      id: 'parcels-fill',
+      type: 'fill',
+      source: 'parcels',
+      'source-layer': 'parcels',
+      paint: {
+        'fill-color': '#3b82f6',
+        'fill-opacity': 0.25,
+      },
+    });
+
+    map.addLayer({
+      id: 'parcels-line',
+      type: 'line',
+      source: 'parcels',
+      'source-layer': 'parcels',
+      paint: {
+        'line-color': '#1e40af',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.2, 16, 0.8, 19, 1.5],
+      },
+    });
+
+    addAdsbLayers(map);
+
+    map.addLayer({
+      id: 'parcels-highlight',
+      type: 'line',
+      source: 'parcels',
+      'source-layer': 'parcels',
+      paint: {
+        'line-color': '#ef4444',
+        'line-width': 2.5,
+      },
+      filter: ['==', ['get', 'pin'], '___none___'],
+    });
+  });
+
+  console.log('[Map] initMap() complete. Map is ready.');
+  return map;
+}
+
+/** Highlight a single parcel by PIN and fly to its location if geometry is in view. */
+export function highlightParcel(map: maplibregl.Map, pin: string | null): void {
+  if (!map.getLayer('parcels-highlight')) return;
+  map.setFilter('parcels-highlight', ['==', ['get', 'pin'], pin ?? '___none___']);
+}
+
+function addAdsbLayers(map: maplibregl.Map): void {
+  map.addSource(ADSB_SOURCES.accumulated.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
+  map.addSource(ADSB_SOURCES.corridors.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
+  map.addSource(ADSB_SOURCES.trails.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
+  map.addSource(ADSB_SOURCES.aircraft.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
+
+  map.addLayer({
+    id: 'adsb-accumulated-corridors',
+    type: 'circle',
+    source: ADSB_SOURCES.accumulated.id,
+    paint: {
+      'circle-color': [
+        'match',
+        ['get', 'proximity_band'],
+        'parcel edge',
+        '#dc2626',
+        'near',
+        '#f97316',
+        'approach',
+        '#eab308',
+        'regional',
+        '#0284c7',
+        'outer',
+        '#64748b',
+        '#94a3b8',
+      ],
+      'circle-radius': [
+        'interpolate',
+        ['linear'],
+        ['coalesce', ['get', 'impact_score'], ['get', 'count'], 1],
+        1,
+        2,
+        20,
+        5,
+        100,
+        10,
+        500,
+        16,
+      ],
+      'circle-opacity': 0.24,
+      'circle-stroke-color': '#0f172a',
+      'circle-stroke-width': 0.8,
+      'circle-stroke-opacity': 0.42,
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-corridors',
+    type: 'circle',
+    source: ADSB_SOURCES.corridors.id,
+    paint: {
+      'circle-color': '#64748b',
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.5, 12, 3, 16, 5],
+      'circle-opacity': 0.2,
+      'circle-stroke-color': '#f8fafc',
+      'circle-stroke-width': 0.8,
+      'circle-stroke-opacity': 0.35,
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-trails',
+    type: 'line',
+    source: ADSB_SOURCES.trails.id,
+    paint: {
+      'line-color': [
+        'match',
+        ['get', 'altitude_band_ft'],
+        '0-2499',
+        '#dc2626',
+        '2500-4999',
+        '#f97316',
+        '5000-9999',
+        '#facc15',
+        '10000+',
+        '#38bdf8',
+        '#cbd5e1',
+      ],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1, 13, 2, 17, 3.5],
+      'line-opacity': 0.78,
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-aircraft',
+    type: 'circle',
+    source: ADSB_SOURCES.aircraft.id,
+    paint: {
+      'circle-color': [
+        'match',
+        ['get', 'altitude_band_ft'],
+        '0-2499',
+        '#b91c1c',
+        '2500-4999',
+        '#ea580c',
+        '5000-9999',
+        '#ca8a04',
+        '10000+',
+        '#0284c7',
+        '#64748b',
+      ],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 13, 6, 17, 9],
+      'circle-stroke-color': '#f8fafc',
+      'circle-stroke-width': 1.5,
+      'circle-opacity': 0.95,
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-aircraft-labels',
+    type: 'symbol',
+    source: ADSB_SOURCES.aircraft.id,
+    minzoom: 9,
+    layout: {
+      'text-field': ['coalesce', ['get', 'flight'], ['get', 'aircraft_hex'], 'aircraft'],
+      'text-font': ['Open Sans Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 9, 10, 15, 12],
+      'text-offset': [0, 1.15],
+      'text-anchor': 'top',
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': '#f8fafc',
+      'text-halo-color': '#020617',
+      'text-halo-width': 1.2,
+    },
+  });
+
+  map.on('click', 'adsb-aircraft', (event) => {
+    const feature = event.features?.[0];
+    const coordinates = feature?.geometry.type === 'Point'
+      ? (feature.geometry.coordinates.slice() as [number, number])
+      : null;
+    if (!feature || !coordinates) return;
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(coordinates)
+      .setHTML(renderAdsbPopup(feature.properties ?? {}))
+      .addTo(map);
+  });
+
+  map.on('click', 'adsb-accumulated-corridors', (event) => {
+    const feature = event.features?.[0];
+    const coordinates = feature?.geometry.type === 'Point'
+      ? (feature.geometry.coordinates.slice() as [number, number])
+      : null;
+    if (!feature || !coordinates) return;
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(coordinates)
+      .setHTML(renderCorridorPopup(feature.properties ?? {}, 'Accumulated band'))
+      .addTo(map);
+  });
+
+  map.on('click', 'adsb-corridors', (event) => {
+    const feature = event.features?.[0];
+    const coordinates = feature?.geometry.type === 'Point'
+      ? (feature.geometry.coordinates.slice() as [number, number])
+      : null;
+    if (!feature || !coordinates) return;
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(coordinates)
+      .setHTML(renderCorridorPopup(feature.properties ?? {}, 'Live band center'))
+      .addTo(map);
+  });
+
+  map.on('mousemove', 'adsb-aircraft', () => {
+    map.getCanvas().style.cursor = 'pointer';
+  });
+  map.on('mouseleave', 'adsb-aircraft', () => {
+    map.getCanvas().style.cursor = '';
+  });
+  for (const layerId of ['adsb-accumulated-corridors', 'adsb-corridors']) {
+    map.on('mousemove', layerId, () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', layerId, () => {
+      map.getCanvas().style.cursor = '';
+    });
+  }
+
+  const refreshLive = () => {
+    void refreshAdsbSources(map);
+  };
+  const refreshAccumulated = () => {
+    void refreshAccumulatedAdsbLayer(map);
+  };
+  refreshLive();
+  refreshAccumulated();
+  window.setInterval(refreshLive, LIVE_REFRESH_MS);
+  window.setInterval(refreshAccumulated, ACCUMULATED_REFRESH_MS);
+}
+
+async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {
+  try {
+    const [aircraft, trails, corridors, flightPayload] = await Promise.all([
+      fetchFeatureCollection(ADSB_SOURCES.aircraft.url),
+      fetchFeatureCollection(ADSB_SOURCES.trails.url),
+      fetchFeatureCollection(ADSB_SOURCES.corridors.url),
+      fetchFlightSummaries(FLIGHT_SUMMARIES_URL),
+    ]);
+    setGeoJsonSourceData(map, ADSB_SOURCES.aircraft.id, aircraft);
+    setGeoJsonSourceData(map, ADSB_SOURCES.trails.id, trails);
+    setGeoJsonSourceData(map, ADSB_SOURCES.corridors.id, corridors);
+    updateAdsbStatus(aircraft.features.length, trails.features.length);
+    renderAdsbLivePanel(aircraft, trails, corridors);
+    renderFlightWatch(flightPayload);
+  } catch (error) {
+    updateAdsbStatus(null, null);
+    renderAdsbLivePanel(null, null, null);
+    renderFlightWatch(null);
+    console.warn('[ADS-B] live layer refresh failed:', error);
+  }
+}
+
+async function refreshAccumulatedAdsbLayer(map: maplibregl.Map): Promise<void> {
+  try {
+    const accumulated = await fetchFeatureCollection(ADSB_SOURCES.accumulated.url);
+    setGeoJsonSourceData(map, ADSB_SOURCES.accumulated.id, accumulated);
+  } catch (error) {
+    console.warn('[ADS-B] accumulated layer refresh failed:', error);
+  }
+}
+
+async function fetchFeatureCollection(url: string): Promise<GeoJSON.FeatureCollection> {
+  const response = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) return EMPTY_FEATURE_COLLECTION;
+  const payload = (await response.json()) as GeoJSON.FeatureCollection;
+  if (payload?.type !== 'FeatureCollection' || !Array.isArray(payload.features)) {
+    return EMPTY_FEATURE_COLLECTION;
+  }
+  return payload;
+}
+
+async function fetchFlightSummaries(url: string): Promise<FlightSummariesPayload> {
+  const response = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) return { summaries: [] };
+  const payload = (await response.json()) as Partial<FlightSummariesPayload>;
+  return {
+    updated_at: payload.updated_at,
+    active_count: Number(payload.active_count ?? 0),
+    geobounds_count: Number(payload.geobounds_count ?? 0),
+    property_hit_count: Number(payload.property_hit_count ?? 0),
+    summaries: Array.isArray(payload.summaries) ? payload.summaries : [],
+  };
+}
+
+function setGeoJsonSourceData(
+  map: maplibregl.Map,
+  sourceId: string,
+  data: GeoJSON.FeatureCollection
+): void {
+  const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  source?.setData(data);
+}
+
+function updateAdsbStatus(aircraftCount: number | null, trailCount: number | null): void {
+  const el = document.getElementById('adsb-status');
+  if (!el) return;
+  el.classList.remove('live', 'error');
+  if (aircraftCount === null || trailCount === null) {
+    el.textContent = 'ADS-B error';
+    el.classList.add('error');
+    return;
+  }
+  el.textContent = `ADS-B ${aircraftCount} / ${trailCount}`;
+  if (aircraftCount > 0 || trailCount > 0) el.classList.add('live');
+}
+
+function renderAdsbLivePanel(
+  aircraft: GeoJSON.FeatureCollection | null,
+  trails: GeoJSON.FeatureCollection | null,
+  corridors: GeoJSON.FeatureCollection | null
+): void {
+  const updatedEl = document.getElementById('adsb-live-updated');
+  const summaryEl = document.getElementById('adsb-live-summary');
+  const listEl = document.getElementById('adsb-live-list');
+  if (!updatedEl || !summaryEl || !listEl) return;
+
+  if (!aircraft || !trails || !corridors) {
+    updatedEl.textContent = 'error';
+    summaryEl.textContent = 'Live ADS-B feed unavailable.';
+    listEl.innerHTML = '';
+    return;
+  }
+
+  const aircraftFeatures = aircraft.features;
+  updatedEl.textContent = new Date().toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  summaryEl.innerHTML = `
+    <span><strong>${aircraftFeatures.length}</strong> aircraft</span>
+    <span><strong>${trails.features.length}</strong> trails</span>
+    <span><strong>${corridors.features.length}</strong> corridors</span>
+  `;
+
+  if (!aircraftFeatures.length) {
+    listEl.innerHTML = '<div class="adsb-live-row"><span class="adsb-live-id">No aircraft in receiver view</span><span class="adsb-live-meta">live</span></div>';
+    return;
+  }
+
+  listEl.innerHTML = aircraftFeatures
+    .slice()
+    .sort(compareAircraftFeatures)
+    .slice(0, 4)
+    .map((feature) => renderAdsbLiveRow(feature.properties ?? {}))
+    .join('');
+}
+
+function renderFlightWatch(payload: FlightSummariesPayload | null): void {
+  const updatedEl = document.getElementById('flight-watch-updated');
+  const modeEl = document.getElementById('flight-watch-mode');
+  const facetsEl = document.getElementById('flight-watch-facets');
+  const listEl = document.getElementById('flight-watch-list');
+  if (!updatedEl || !modeEl || !facetsEl || !listEl) return;
+
+  lastFlightPayload = payload;
+  if (!payload) {
+    updatedEl.textContent = 'unavailable';
+    modeEl.textContent = 'error';
+    facetsEl.innerHTML = '';
+    listEl.innerHTML = '<div class="panel-empty">Live ADS-B summaries unavailable.</div>';
+    return;
+  }
+
+  const summaries = payload.summaries.slice().sort(compareFlightSummaries);
+  updatedEl.textContent = payload.updated_at ? formatShortTime(payload.updated_at) : 'waiting';
+  modeEl.textContent = `${payload.active_count ?? 0} active`;
+  renderFlightFacets(facetsEl, summaries);
+
+  const filtered = summaries.filter((summary) => flightMatchesFacet(summary, selectedFlightFacet));
+  if (!filtered.length) {
+    listEl.innerHTML = '<div class="panel-empty">No matching overflights yet.</div>';
+    return;
+  }
+
+  const featuredKeys = new Set(
+    filtered
+      .filter((summary) => summary.active || summary.geobounds_hit)
+      .slice(0, 3)
+      .map((summary) => summary.track_key)
+  );
+  const featured = filtered.filter((summary) => featuredKeys.has(summary.track_key));
+  const rows = filtered.filter((summary) => !featuredKeys.has(summary.track_key)).slice(0, 14);
+
+  listEl.innerHTML = [
+    ...featured.map(renderFlightCard),
+    rows.length ? '<div class="flight-row-group">' : '',
+    ...rows.map(renderFlightRow),
+    rows.length ? '</div>' : '',
+  ].join('');
+}
+
+function renderFlightFacets(container: HTMLElement, summaries: FlightSummary[]): void {
+  const definitions = [
+    { id: 'all', label: 'All', count: summaries.length },
+    { id: 'active', label: 'Active', count: summaries.filter((summary) => summary.active).length },
+    {
+      id: 'niskayuna',
+      label: 'Niskayuna',
+      count: summaries.filter((summary) => summary.geobounds_hit).length,
+    },
+    {
+      id: 'commercial',
+      label: 'Commercial',
+      count: summaries.filter((summary) => summary.aircraft_class === 'commercial').length,
+    },
+    {
+      id: 'ga',
+      label: 'GA',
+      count: summaries.filter((summary) => summary.aircraft_class === 'general aviation').length,
+    },
+    {
+      id: 'helicopter',
+      label: 'Heli',
+      count: summaries.filter((summary) => summary.aircraft_class === 'helicopter').length,
+    },
+  ];
+
+  container.innerHTML = definitions
+    .map(
+      (facet) => `
+        <button
+          type="button"
+          class="flight-facet ${facet.id === selectedFlightFacet ? 'selected' : ''}"
+          data-flight-facet="${escapeHtml(facet.id)}"
+        >
+          ${escapeHtml(facet.label)} <span>${facet.count}</span>
+        </button>
+      `
+    )
+    .join('');
+
+  container.querySelectorAll<HTMLButtonElement>('[data-flight-facet]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedFlightFacet = button.dataset.flightFacet ?? 'all';
+      if (lastFlightPayload) renderFlightWatch(lastFlightPayload);
+    });
+  });
+}
+
+function flightMatchesFacet(summary: FlightSummary, facet: string): boolean {
+  if (facet === 'active') return Boolean(summary.active);
+  if (facet === 'niskayuna') return Boolean(summary.geobounds_hit);
+  if (facet === 'commercial') return summary.aircraft_class === 'commercial';
+  if (facet === 'ga') return summary.aircraft_class === 'general aviation';
+  if (facet === 'helicopter') return summary.aircraft_class === 'helicopter';
+  return true;
+}
+
+function compareFlightSummaries(a: FlightSummary, b: FlightSummary): number {
+  const aRank = flightPriority(a);
+  const bRank = flightPriority(b);
+  if (aRank !== bRank) return aRank - bRank;
+  const aImpact = Number(a.impact_score ?? 0);
+  const bImpact = Number(b.impact_score ?? 0);
+  if (aImpact !== bImpact) return bImpact - aImpact;
+  return timestampMs(b.last_observed_at) - timestampMs(a.last_observed_at);
+}
+
+function flightPriority(summary: FlightSummary): number {
+  if (summary.active && summary.geobounds_hit) return 0;
+  if (summary.active) return 1;
+  if (summary.geobounds_hit) return 2;
+  if (summary.persisted) return 3;
+  return 4;
+}
+
+function renderFlightCard(summary: FlightSummary): string {
+  const label = flightLabel(summary);
+  const status = summary.active ? 'active' : summary.persisted ? 'persisted' : 'history';
+  const meta = flightMeta(summary);
+  return `
+    <article class="flight-card ${summary.geobounds_hit ? 'hit' : ''}">
+      <div class="flight-card-top">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(status)}</span>
+      </div>
+      <div class="flight-meta-line">${escapeHtml(meta)}</div>
+      <div class="flight-metrics">
+        <span><strong>${escapeHtml(formatOptional(summary.altitude_ft, ' ft'))}</strong><em>alt</em></span>
+        <span><strong>${escapeHtml(formatOptional(summary.speed_kt, ' kt'))}</strong><em>speed</em></span>
+        <span><strong>${Math.round(Number(summary.property_hits ?? 0)).toLocaleString('en-US')}</strong><em>hits</em></span>
+      </div>
+      ${renderSparklineSet(summary)}
+      <div class="flight-foot">
+        <span>${escapeHtml(summary.area || 'receiver')}</span>
+        <span>${Math.round(Number(summary.impact_score ?? 0)).toLocaleString('en-US')} impact</span>
+        <span>${Math.round(Number(summary.point_count ?? 0)).toLocaleString('en-US')} pts</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderFlightRow(summary: FlightSummary): string {
+  return `
+    <article class="flight-row-compact ${summary.active ? 'active' : ''}">
+      <div class="flight-row-main">
+        <strong>${escapeHtml(flightLabel(summary))}</strong>
+        <span>${escapeHtml(flightMeta(summary))}</span>
+      </div>
+      <div class="flight-row-metrics">
+        <span>${escapeHtml(formatOptional(summary.altitude_ft, ' ft'))}</span>
+        <span>${escapeHtml(formatOptional(summary.speed_kt, ' kt'))}</span>
+        <span>${Math.round(Number(summary.property_hits ?? 0)).toLocaleString('en-US')} hits</span>
+      </div>
+      ${renderSparklineSet(summary)}
+    </article>
+  `;
+}
+
+function flightLabel(summary: FlightSummary): string {
+  return String(summary.label || summary.flight || summary.registration || summary.aircraft_hex || 'Aircraft');
+}
+
+function flightMeta(summary: FlightSummary): string {
+  const values = [
+    summary.operator_hint,
+    summary.registration,
+    summary.aircraft_type,
+    summary.wake_turbulence_category ? `WTC ${summary.wake_turbulence_category}` : null,
+    summary.aircraft_class,
+  ].filter(Boolean);
+  return values.length ? values.join(' · ') : 'unclassified aircraft';
+}
+
+function renderSparklineSet(summary: FlightSummary): string {
+  return `
+    <div class="flight-sparklines">
+      ${renderSparkline('Alt', summary.sparkline?.altitude_ft, 'alt')}
+      ${renderSparkline('Speed', summary.sparkline?.speed_kt, 'speed')}
+      ${renderSparkline('Hits', summary.sparkline?.property_hits, 'hits')}
+    </div>
+  `;
+}
+
+function renderSparkline(label: string, values: Array<number | null> | undefined, kind: string): string {
+  const points = sparklinePath(values ?? []);
+  return `
+    <div class="flight-spark">
+      <span>${escapeHtml(label)}</span>
+      <svg viewBox="0 0 84 22" preserveAspectRatio="none" aria-hidden="true">
+        <path class="spark-baseline" d="M0 20 L84 20"></path>
+        <path class="spark-line spark-${escapeHtml(kind)}" d="${points}"></path>
+      </svg>
+    </div>
+  `;
+}
+
+function sparklinePath(values: Array<number | null>): string {
+  const clean = values
+    .map((value) => Number(value))
+    .map((value) => (Number.isFinite(value) ? value : null));
+  const finite = clean.filter((value): value is number => value !== null);
+  if (!finite.length) return 'M0 11 L84 11';
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const range = max - min || 1;
+  const denom = Math.max(clean.length - 1, 1);
+  const points = clean.map((value, index) => {
+    const normalized = value === null ? 0.5 : (value - min) / range;
+    const x = (index / denom) * 84;
+    const y = 20 - normalized * 18;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  if (points.length === 1) return `M0 ${points[0].split(',')[1]} L84 ${points[0].split(',')[1]}`;
+  return `M${points.join(' L')}`;
+}
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function formatShortTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'waiting';
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
+function compareAircraftFeatures(a: GeoJSON.Feature, b: GeoJSON.Feature): number {
+  const aAlt = Number(a.properties?.alt_baro_ft ?? a.properties?.alt_geom_ft);
+  const bAlt = Number(b.properties?.alt_baro_ft ?? b.properties?.alt_geom_ft);
+  if (Number.isFinite(aAlt) && Number.isFinite(bAlt)) return aAlt - bAlt;
+  if (Number.isFinite(aAlt)) return -1;
+  if (Number.isFinite(bAlt)) return 1;
+  return String(a.properties?.flight ?? a.properties?.aircraft_hex ?? '').localeCompare(
+    String(b.properties?.flight ?? b.properties?.aircraft_hex ?? '')
+  );
+}
+
+function renderAdsbLiveRow(properties: Record<string, unknown>): string {
+  const label = String(properties.flight || properties.registration || properties.aircraft_hex || 'Aircraft');
+  const altitude = formatOptional(properties.alt_baro_ft ?? properties.alt_geom_ft, ' ft');
+  const speed = formatOptional(properties.ground_speed_kt, ' kt');
+  const track = formatOptional(properties.track_deg, ' deg');
+  const area = String(properties.area || 'receiver');
+  const band = String(properties.altitude_band_ft || 'unknown');
+  const type = String(properties.aircraft_type || properties.aircraft_class || '');
+  return `
+    <div class="adsb-live-row">
+      <span class="adsb-live-id">${escapeHtml(label)}</span>
+      <span class="adsb-live-meta">${escapeHtml(altitude)}</span>
+      <span class="adsb-live-sub">
+        <span>${escapeHtml(speed)}</span>
+        <span>${escapeHtml(track)}</span>
+        <span>${escapeHtml(area)}</span>
+        <span>${escapeHtml(band)}</span>
+        ${type ? `<span>${escapeHtml(type)}</span>` : ''}
+      </span>
+    </div>
+  `;
+}
+
+function renderAdsbPopup(properties: Record<string, unknown>): string {
+  const title = String(properties.flight || properties.registration || properties.aircraft_hex || 'Aircraft');
+  const altitude = formatOptional(properties.alt_baro_ft, ' ft');
+  const speed = formatOptional(properties.ground_speed_kt, ' kt');
+  const track = formatOptional(properties.track_deg, ' deg');
+  const registration = String(properties.registration || 'unknown');
+  const type = String(properties.aircraft_type || properties.aircraft_class || 'unknown');
+  return `
+    <div class="adsb-popup">
+      <strong>${escapeHtml(title)}</strong>
+      <div><span>Registration</span><span>${escapeHtml(registration)}</span></div>
+      <div><span>Type</span><span>${escapeHtml(type)}</span></div>
+      <div><span>Altitude</span><span>${escapeHtml(altitude)}</span></div>
+      <div><span>Speed</span><span>${escapeHtml(speed)}</span></div>
+      <div><span>Track</span><span>${escapeHtml(track)}</span></div>
+      <div><span>Area</span><span>${escapeHtml(String(properties.area || 'receiver'))}</span></div>
+    </div>
+  `;
+}
+
+function renderCorridorPopup(properties: Record<string, unknown>, title: string): string {
+  const count = formatOptional(properties.count, '');
+  const impact = formatOptional(properties.impact_score, '');
+  const proximity = String(properties.proximity_band || 'corridor');
+  const band = String(properties.altitude_band_ft || 'unknown');
+  const cellSize = Number(properties.cell_size_degrees);
+  const cellLabel = Number.isFinite(cellSize) ? `${cellSize.toFixed(4)} deg` : 'band';
+  return `
+    <div class="adsb-popup">
+      <strong>${escapeHtml(title)}</strong>
+      <div><span>Type</span><span>${escapeHtml(proximity)}</span></div>
+      <div><span>Cell</span><span>${escapeHtml(cellLabel)}</span></div>
+      <div><span>Altitude</span><span>${escapeHtml(band)}</span></div>
+      <div><span>Count</span><span>${escapeHtml(count)}</span></div>
+      <div><span>Impact</span><span>${escapeHtml(impact)}</span></div>
+    </div>
+  `;
+}
+
+function formatOptional(value: unknown, unit: string): string {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'unknown';
+  return `${Math.round(number).toLocaleString('en-US')}${unit}`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] as string)
+  );
+}

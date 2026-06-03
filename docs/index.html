@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <title>Niskayuna Parcel Viewer</title>
+    <script type="module" crossorigin src="/overwatch/assets/index-BHRy3Njf.js"></script>
+    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-DAfSn4z9.css">
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <div class="brand">Niskayuna Parcels &middot; 2026</div>
+        <div class="search-wrap">
+          <input
+            id="search"
+            type="search"
+            placeholder="Search by address or PIN (e.g. 660 Fillmore or 72.6-1-9)"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Search parcels by address or PIN"
+          />
+          <label class="owner-toggle" title="Owner search is exact-match only and off by default for privacy.">
+            <input id="owner-toggle" type="checkbox" />
+            <span>Include owner</span>
+          </label>
+          <div id="adsb-status" class="adsb-status" title="Live ADS-B aircraft and recent trails">
+            ADS-B waiting
+          </div>
+          <div id="results" role="listbox" aria-label="Search results"></div>
+        </div>
+      </header>
+      <main>
+        <div id="map-wrap">
+          <div id="map" aria-label="Map of Niskayuna parcels"></div>
+          <section id="adsb-live-panel" class="adsb-live-panel" aria-live="polite">
+            <div class="adsb-live-head">
+              <span>Live ADS-B</span>
+              <span id="adsb-live-updated">waiting</span>
+            </div>
+            <div id="adsb-live-summary" class="adsb-live-summary">No live aircraft yet.</div>
+            <div id="adsb-live-list" class="adsb-live-list"></div>
+          </section>
+        </div>
+        <aside id="panel" aria-live="polite">
+          <section id="flight-watch" class="flight-watch">
+            <div class="flight-watch-head">
+              <div>
+                <h2>Overflight Watch</h2>
+                <p id="flight-watch-updated">waiting</p>
+              </div>
+              <div id="flight-watch-mode" class="flight-watch-mode">live</div>
+            </div>
+            <div id="flight-watch-facets" class="flight-watch-facets"></div>
+            <div id="flight-watch-list" class="flight-watch-list">
+              <div class="panel-empty">Waiting for receiver data.</div>
+            </div>
+          </section>
+          <section id="parcel-detail" class="parcel-detail">
+            <div class="panel-empty">Click a parcel or pick a search result.</div>
+          </section>
+        </aside>
+      </main>
+      <footer id="footer">
+        Data: 2026 Tentative Assessment Roll + Schenectady County SIMS GIS.
+        No tracking. No accounts. Static site.
+      </footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+.DS_Store
+.env
+.env.*
+dist/
+node_modules/
+npm-debug.log*
+*.tsbuildinfo
+*.log
+*.ndjson
+
+# Keep raw extraction/scraping artifacts out of the publish repo.
+*.csv
+*.xlsx
+*.pdf
+adsb_data/
+adsb_receiver_json/
+portal_detail_cache/
+schenectady-county-land-records/
+viewer/

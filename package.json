@@ -1,0 +1,23 @@
+{
+  "name": "overwatch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:pages": "BASE_PATH=/overwatch/ npm run build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1",
+    "minisearch": "^7.1.0",
+    "pmtiles": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
+  }
+}
