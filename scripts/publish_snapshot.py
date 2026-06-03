@@ -94,6 +94,8 @@ def main() -> int:
     log(f"building GitHub Pages docs with BASE_PATH={BASE_PATH_VALUE}")
     build_env = os.environ.copy()
     build_env["BASE_PATH"] = BASE_PATH_VALUE
+    npm_bin_dir = str(Path(NPM_BIN).parent)
+    build_env["PATH"] = f"{npm_bin_dir}:{build_env.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')}"
     run([NPM_BIN, "run", "build"], cwd=REPO, env=build_env)
 
     run([GIT_BIN, "add", "public/adsb", "docs"], cwd=REPO)
