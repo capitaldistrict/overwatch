@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:pages": "BASE_PATH=/overwatch/ npm run build",
+    "publish:snapshot": "./scripts/publish_snapshot.sh",
+    "publisher:install": "./scripts/install_launchd_publisher.sh 300",
+    "publisher:uninstall": "./scripts/uninstall_launchd_publisher.sh",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

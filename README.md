@@ -73,7 +73,21 @@ git commit -m "Update ADS-B snapshot"
 git push origin main
 ```
 
-A local `launchd` job or cron job can run that flow every 5 minutes. Keep the collector, receiver logs, raw ADS-B history, and launchd plists outside this repo.
+This repo includes local operational scripts for that flow:
+
+```sh
+npm run publish:snapshot
+npm run publisher:install
+```
+
+`publisher:install` installs `com.overwatch.publish_snapshot` as a per-user macOS `launchd` job at a 300-second cadence and runs one publish immediately. To use a shorter cadence, run the installer directly:
+
+```sh
+./scripts/install_launchd_publisher.sh 90
+./scripts/install_launchd_publisher.sh 60
+```
+
+The publisher commits only `public/adsb` and `docs` snapshot changes, and skips the commit when nothing changed. Logs stay outside the repo at `../adsb_data/logs/overwatch_publisher.launchd.log` and `../adsb_data/logs/overwatch_publisher.launchd.err.log`. Keep receiver logs, raw ADS-B history, and launchd plists outside this repo.
 
 ## Enrichment strategy
 
