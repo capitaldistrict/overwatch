@@ -47,6 +47,7 @@ cat > "$PLIST" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/bin/bash</string>
     <string>$SCRIPT</string>
   </array>
   <key>WorkingDirectory</key>
