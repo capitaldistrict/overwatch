@@ -89,6 +89,10 @@ const ADSB_SOURCES = {
   trails: { id: 'adsb-trails-source', url: publicAssetUrl('adsb/live-trails.geojson') },
   corridors: { id: 'adsb-corridors-source', url: publicAssetUrl('adsb/corridor-markers.geojson') },
   accumulated: { id: 'adsb-accumulated-source', url: publicAssetUrl('adsb/accumulated-corridors.geojson') },
+  lowAltitudeBands: {
+    id: 'adsb-low-altitude-corridor-bands-source',
+    url: publicAssetUrl('adsb/low-altitude-corridor-bands.geojson'),
+  },
   parcelOverflights: { id: 'adsb-parcel-overflights', url: publicAssetUrl('adsb/parcel-overflights.geojson') },
 } as const;
 
@@ -260,6 +264,10 @@ function addAdsbLayers(map: maplibregl.Map): void {
     type: 'geojson',
     data: EMPTY_FEATURE_COLLECTION,
   });
+  map.addSource(ADSB_SOURCES.lowAltitudeBands.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
   map.addSource(ADSB_SOURCES.corridors.id, {
     type: 'geojson',
     data: EMPTY_FEATURE_COLLECTION,
@@ -271,6 +279,57 @@ function addAdsbLayers(map: maplibregl.Map): void {
   map.addSource(ADSB_SOURCES.aircraft.id, {
     type: 'geojson',
     data: EMPTY_FEATURE_COLLECTION,
+  });
+
+  map.addLayer({
+    id: 'adsb-low-altitude-corridor-bands-fill',
+    type: 'fill',
+    source: ADSB_SOURCES.lowAltitudeBands.id,
+    paint: {
+      'fill-color': [
+        'match',
+        ['get', 'altitude_severity'],
+        'low',
+        '#dc2626',
+        'medium',
+        '#f97316',
+        'elevated',
+        '#facc15',
+        '#facc15',
+      ],
+      'fill-opacity': [
+        'interpolate',
+        ['linear'],
+        ['coalesce', ['get', 'impact_score'], ['get', 'under_10000_count'], ['get', 'count'], 1],
+        1,
+        0.08,
+        20,
+        0.15,
+        100,
+        0.24,
+      ],
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-low-altitude-corridor-bands-line',
+    type: 'line',
+    source: ADSB_SOURCES.lowAltitudeBands.id,
+    paint: {
+      'line-color': [
+        'match',
+        ['get', 'altitude_severity'],
+        'low',
+        '#991b1b',
+        'medium',
+        '#c2410c',
+        'elevated',
+        '#a16207',
+        '#a16207',
+      ],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.25, 12, 0.65, 16, 1.15],
+      'line-opacity': 0.42,
+    },
   });
 
   map.addLayer({
@@ -431,13 +490,22 @@ function addAdsbLayers(map: maplibregl.Map): void {
       .addTo(map);
   });
 
+  map.on('click', 'adsb-low-altitude-corridor-bands-fill', (event) => {
+    const feature = event.features?.[0];
+    if (!feature) return;
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(event.lngLat)
+      .setHTML(renderCorridorPopup(feature.properties ?? {}, 'Under 10k corridor band'))
+      .addTo(map);
+  });
+
   map.on('mousemove', 'adsb-aircraft', () => {
     map.getCanvas().style.cursor = 'pointer';
   });
   map.on('mouseleave', 'adsb-aircraft', () => {
     map.getCanvas().style.cursor = '';
   });
-  for (const layerId of ['adsb-accumulated-corridors', 'adsb-corridors']) {
+  for (const layerId of ['adsb-accumulated-corridors', 'adsb-corridors', 'adsb-low-altitude-corridor-bands-fill']) {
     map.on('mousemove', layerId, () => {
       map.getCanvas().style.cursor = 'pointer';
     });
@@ -493,8 +561,12 @@ async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {
 
 async function refreshAccumulatedAdsbLayer(map: maplibregl.Map): Promise<void> {
   try {
-    const accumulated = await fetchFeatureCollection(ADSB_SOURCES.accumulated.url);
+    const [accumulated, lowAltitudeBands] = await Promise.all([
+      fetchFeatureCollection(ADSB_SOURCES.accumulated.url),
+      fetchFeatureCollection(ADSB_SOURCES.lowAltitudeBands.url),
+    ]);
     setGeoJsonSourceData(map, ADSB_SOURCES.accumulated.id, accumulated);
+    setGeoJsonSourceData(map, ADSB_SOURCES.lowAltitudeBands.id, lowAltitudeBands);
   } catch (error) {
     console.warn('[ADS-B] accumulated layer refresh failed:', error);
   }
