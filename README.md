@@ -69,7 +69,8 @@ The current ADS-B files expected by the app are:
 For a five-minute static publish job from the parent workspace, the practical flow is:
 
 ```sh
-cd /path/to/parent-workspace
+export PROPDATA_ROOT=/path/to/parent-workspace
+cd "$PROPDATA_ROOT"
 python3 adsb_collector.py \
   --source adsb_receiver_json/aircraft.json \
   --output-dir adsb_data \
@@ -77,7 +78,7 @@ python3 adsb_collector.py \
   --viewer-public-dir overwatch/public/adsb \
   --live-history-minutes 120
 
-cd /path/to/parent-workspace/overwatch
+cd "$PROPDATA_ROOT/overwatch"
 npm run build:pages
 git add public/adsb docs
 git commit -m "Update ADS-B snapshot"
@@ -127,7 +128,7 @@ Candidate services:
 Suggested commands:
 
 ```sh
-cd /path/to/parent-workspace/overwatch
+cd /path/to/overwatch
 git init
 git branch -M main
 npm install

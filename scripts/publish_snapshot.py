@@ -19,16 +19,20 @@ def env_text(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-ROOT = env_path("PROPDATA_ROOT", "/path/to/parent-workspace")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_REPO = SCRIPT_DIR.parent
+DEFAULT_WORKSPACE = DEFAULT_REPO.parent
+
+ROOT = env_path("PROPDATA_ROOT", str(DEFAULT_WORKSPACE))
 REPO = env_path("OVERWATCH_REPO", str(ROOT / "overwatch"))
 SOURCE = env_path("ADSB_SOURCE", str(ROOT / "adsb_receiver_json" / "aircraft.json"))
 OUTPUT_DIR = env_path("ADSB_OUTPUT_DIR", str(ROOT / "adsb_data"))
 VIEWER_ADSB_DIR = env_path("OVERWATCH_ADSB_DIR", str(REPO / "public" / "adsb"))
 LIVE_HISTORY_MINUTES = env_text("LIVE_HISTORY_MINUTES", "120")
 BASE_PATH_VALUE = env_text("BASE_PATH", "/overwatch/")
-PYTHON_BIN = env_text("PYTHON_BIN", "python3")
-NPM_BIN = env_text("NPM_BIN", "npm")
-GIT_BIN = env_text("GIT_BIN", "/usr/bin/git")
+PYTHON_BIN = env_text("PYTHON_BIN", sys.executable)
+NPM_BIN = env_text("NPM_BIN", shutil.which("npm") or "npm")
+GIT_BIN = env_text("GIT_BIN", shutil.which("git") or "git")
 LOCK_DIR = env_path("OVERWATCH_PUBLISH_LOCK", "/tmp/overwatch-publish.lock")
 
 
@@ -94,8 +98,9 @@ def main() -> int:
     log(f"building GitHub Pages docs with BASE_PATH={BASE_PATH_VALUE}")
     build_env = os.environ.copy()
     build_env["BASE_PATH"] = BASE_PATH_VALUE
-    npm_bin_dir = str(Path(NPM_BIN).parent)
-    build_env["PATH"] = f"{npm_bin_dir}:{build_env.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')}"
+    npm_path = Path(NPM_BIN)
+    if npm_path.parent != Path("."):
+        build_env["PATH"] = f"{npm_path.parent}:{build_env.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')}"
     run([NPM_BIN, "run", "build"], cwd=REPO, env=build_env)
 
     run([GIT_BIN, "add", "public/adsb", "docs"], cwd=REPO)

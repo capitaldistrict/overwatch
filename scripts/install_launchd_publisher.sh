@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${PROPDATA_ROOT:-/path/to/parent-workspace}"
-REPO="${OVERWATCH_REPO:-$ROOT/overwatch}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${OVERWATCH_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+ROOT="${PROPDATA_ROOT:-$(cd "$REPO/.." && pwd)}"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+NPM_BIN="${NPM_BIN:-$(command -v npm)}"
+GIT_BIN="${GIT_BIN:-$(command -v git)}"
 PUBLISHER="$REPO/scripts/publish_snapshot.py"
 LABEL="${OVERWATCH_PUBLISH_LABEL:-com.overwatch.publish_snapshot}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -53,6 +56,19 @@ cat > "$PLIST" <<EOF
   </array>
   <key>WorkingDirectory</key>
   <string>$ROOT</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PROPDATA_ROOT</key>
+    <string>$ROOT</string>
+    <key>OVERWATCH_REPO</key>
+    <string>$REPO</string>
+    <key>PYTHON_BIN</key>
+    <string>$PYTHON_BIN</string>
+    <key>NPM_BIN</key>
+    <string>$NPM_BIN</string>
+    <key>GIT_BIN</key>
+    <string>$GIT_BIN</string>
+  </dict>
   <key>StartInterval</key>
   <integer>$INTERVAL</integer>
   <key>RunAtLoad</key>
