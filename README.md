@@ -38,11 +38,14 @@ If `VITE_PMTILES_URL` is set, the app loads parcels from that fully qualified PM
 
 The hosted Pages site is static. It does not talk to dump1090 or third-party ADS-B providers from the browser. Instead, a local collector should periodically refresh `public/adsb/`, rebuild `docs/`, commit the new static snapshot, and push to GitHub Pages.
 
+The map UI labels this as a published snapshot. Browser-side refreshes only re-read the static JSON files currently deployed by GitHub Pages; they do not make the public site real-time. Data freshness is controlled by the local publish job and the Pages deployment finishing after each push.
+
 Recommended cadence:
 
 - dump1090 writes local receiver JSON every 1 second.
 - the collector polls at 5-30 seconds and updates local history.
 - the public snapshot is rebuilt and pushed at most every 5 minutes.
+- GitHub Pages publishes after the new commit is pushed to the configured Pages source. Expect a short deployment delay; if no local publish job runs, the public site remains at the last pushed snapshot indefinitely.
 
 The current ADS-B files expected by the app are:
 

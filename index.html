@@ -24,7 +24,7 @@
             <input id="owner-toggle" type="checkbox" />
             <span>Include owner</span>
           </label>
-          <div id="adsb-status" class="adsb-status" title="Live ADS-B aircraft and recent trails">
+          <div id="adsb-status" class="adsb-status" title="Published ADS-B aircraft and recent trails">
             ADS-B waiting
           </div>
           <div id="results" role="listbox" aria-label="Search results"></div>
@@ -35,10 +35,10 @@
           <div id="map" aria-label="Map of Niskayuna parcels"></div>
           <section id="adsb-live-panel" class="adsb-live-panel" aria-live="polite">
             <div class="adsb-live-head">
-              <span>Live ADS-B</span>
+              <span>Published ADS-B</span>
               <span id="adsb-live-updated">waiting</span>
             </div>
-            <div id="adsb-live-summary" class="adsb-live-summary">No live aircraft yet.</div>
+            <div id="adsb-live-summary" class="adsb-live-summary">No published aircraft yet.</div>
             <div id="adsb-live-list" class="adsb-live-list"></div>
           </section>
         </div>
@@ -48,8 +48,9 @@
               <div>
                 <h2>Overflight Watch</h2>
                 <p id="flight-watch-updated">waiting</p>
+                <p class="flight-watch-note">Static site; updates after the next published snapshot.</p>
               </div>
-              <div id="flight-watch-mode" class="flight-watch-mode">live</div>
+              <div id="flight-watch-mode" class="flight-watch-mode">snapshot</div>
             </div>
             <div id="flight-watch-facets" class="flight-watch-facets"></div>
             <div id="flight-watch-list" class="flight-watch-list">

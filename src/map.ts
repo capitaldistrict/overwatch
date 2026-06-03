@@ -385,7 +385,7 @@ async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {
     setGeoJsonSourceData(map, ADSB_SOURCES.trails.id, trails);
     setGeoJsonSourceData(map, ADSB_SOURCES.corridors.id, corridors);
     updateAdsbStatus(aircraft.features.length, trails.features.length);
-    renderAdsbLivePanel(aircraft, trails, corridors);
+    renderAdsbLivePanel(aircraft, trails, corridors, flightPayload.updated_at);
     renderFlightWatch(flightPayload);
   } catch (error) {
     updateAdsbStatus(null, null);
@@ -452,7 +452,8 @@ function updateAdsbStatus(aircraftCount: number | null, trailCount: number | nul
 function renderAdsbLivePanel(
   aircraft: GeoJSON.FeatureCollection | null,
   trails: GeoJSON.FeatureCollection | null,
-  corridors: GeoJSON.FeatureCollection | null
+  corridors: GeoJSON.FeatureCollection | null,
+  publishedAt?: string
 ): void {
   const updatedEl = document.getElementById('adsb-live-updated');
   const summaryEl = document.getElementById('adsb-live-summary');
@@ -461,17 +462,13 @@ function renderAdsbLivePanel(
 
   if (!aircraft || !trails || !corridors) {
     updatedEl.textContent = 'error';
-    summaryEl.textContent = 'Live ADS-B feed unavailable.';
+    summaryEl.textContent = 'Published ADS-B snapshot unavailable.';
     listEl.innerHTML = '';
     return;
   }
 
   const aircraftFeatures = aircraft.features;
-  updatedEl.textContent = new Date().toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  updatedEl.textContent = publishedAt ? `published ${formatShortTime(publishedAt)}` : 'snapshot';
   summaryEl.innerHTML = `
     <span><strong>${aircraftFeatures.length}</strong> aircraft</span>
     <span><strong>${trails.features.length}</strong> trails</span>
@@ -479,7 +476,7 @@ function renderAdsbLivePanel(
   `;
 
   if (!aircraftFeatures.length) {
-    listEl.innerHTML = '<div class="adsb-live-row"><span class="adsb-live-id">No aircraft in receiver view</span><span class="adsb-live-meta">live</span></div>';
+    listEl.innerHTML = '<div class="adsb-live-row"><span class="adsb-live-id">No aircraft in published view</span><span class="adsb-live-meta">snapshot</span></div>';
     return;
   }
 
@@ -500,16 +497,16 @@ function renderFlightWatch(payload: FlightSummariesPayload | null): void {
 
   lastFlightPayload = payload;
   if (!payload) {
-    updatedEl.textContent = 'unavailable';
+    updatedEl.textContent = 'snapshot unavailable';
     modeEl.textContent = 'error';
     facetsEl.innerHTML = '';
-    listEl.innerHTML = '<div class="panel-empty">Live ADS-B summaries unavailable.</div>';
+    listEl.innerHTML = '<div class="panel-empty">Published ADS-B summaries unavailable.</div>';
     return;
   }
 
   const summaries = payload.summaries.slice().sort(compareFlightSummaries);
-  updatedEl.textContent = payload.updated_at ? formatShortTime(payload.updated_at) : 'waiting';
-  modeEl.textContent = `${payload.active_count ?? 0} active`;
+  updatedEl.textContent = payload.updated_at ? `Snapshot ${formatShortTime(payload.updated_at)}` : 'waiting';
+  modeEl.textContent = `${payload.active_count ?? 0} active at publish`;
   renderFlightFacets(facetsEl, summaries);
 
   const filtered = summaries.filter((summary) => flightMatchesFacet(summary, selectedFlightFacet));
@@ -612,7 +609,7 @@ function flightPriority(summary: FlightSummary): number {
 
 function renderFlightCard(summary: FlightSummary): string {
   const label = flightLabel(summary);
-  const status = summary.active ? 'active' : summary.persisted ? 'persisted' : 'history';
+  const status = summary.active ? 'active at publish' : summary.persisted ? 'persisted' : 'history';
   const meta = flightMeta(summary);
   return `
     <article class="flight-card ${summary.geobounds_hit ? 'hit' : ''}">
