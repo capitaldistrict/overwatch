@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="${PROPDATA_ROOT:-/path/to/parent-workspace}"
 REPO="${OVERWATCH_REPO:-$ROOT/overwatch}"
-SCRIPT="$REPO/scripts/publish_snapshot.sh"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+PUBLISHER="$REPO/scripts/publish_snapshot.py"
 LABEL="${OVERWATCH_PUBLISH_LABEL:-com.overwatch.publish_snapshot}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 INTERVAL="${1:-300}"
@@ -26,8 +27,8 @@ if [ "$INTERVAL" -lt 60 ]; then
   exit 2
 fi
 
-if [ ! -x "$SCRIPT" ]; then
-  printf 'Publisher script is not executable: %s\n' "$SCRIPT" >&2
+if [ ! -f "$PUBLISHER" ]; then
+  printf 'Publisher script was not found: %s\n' "$PUBLISHER" >&2
   exit 1
 fi
 
@@ -47,8 +48,8 @@ cat > "$PLIST" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>$SCRIPT</string>
+    <string>$PYTHON_BIN</string>
+    <string>$PUBLISHER</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$ROOT</string>

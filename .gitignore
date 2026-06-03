@@ -7,6 +7,7 @@ npm-debug.log*
 *.tsbuildinfo
 *.log
 *.ndjson
+__pycache__/
 
 # Keep raw extraction/scraping artifacts out of the publish repo.
 *.csv
