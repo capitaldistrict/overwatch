@@ -1,6 +1,6 @@
 import maplibregl from 'maplibre-gl';
 import { publicAssetUrl } from './assets';
-import { initMap, highlightParcel } from './map';
+import { getParcelOverflightImpact, initMap, highlightParcel } from './map';
 import { resolveParcelIdentityFromPin } from './parcelIdentity';
 import './styles.css';
 
@@ -32,6 +32,7 @@ let drawerDragStartY = 0;
 let drawerDragStartHeight = 0;
 let drawerDragActive = false;
 let suppressNextDrawerClick = false;
+let lastPanelProps: { pin?: string; address?: string; owner?: string; [k: string]: unknown } | null = null;
 
 initMobileDrawer();
 
@@ -175,6 +176,7 @@ function extendBounds(bounds: maplibregl.LngLatBounds, geom: GeoJSON.Geometry): 
 }
 
 function renderPanel(props: { pin?: string; address?: string; owner?: string; [k: string]: unknown }): void {
+  lastPanelProps = props;
   panelEl.innerHTML = '';
 
   const rows: Array<[string, string | undefined]> = [
@@ -213,6 +215,8 @@ function renderPanel(props: { pin?: string; address?: string; owner?: string; [k
   appendKV(trace, 'Viewer PIN', (props.source_pin as string) || (props.pin as string) || '\u2014');
   appendKV(trace, 'Canonical parcel ID', (props.parcel_id as string) || '\u2014');
   panelEl.appendChild(trace);
+
+  appendOverflightSection(props);
 }
 
 function appendKV(parent: HTMLElement, k: string, v: string): void {
@@ -227,6 +231,52 @@ function formatMoney(v: unknown): string {
   if (!Number.isFinite(n)) return String(v);
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
+
+function appendOverflightSection(props: { pin?: string; [k: string]: unknown }): void {
+  const pin = (props.source_pin as string) || (props.pin as string) || (props.parcel_id as string);
+  const impact = getParcelOverflightImpact(pin);
+  if (!impact) return;
+
+  const section = document.createElement('div');
+  section.className = 'panel-section overflight-section';
+  section.innerHTML = '<h3>Overflights</h3>';
+  appendKV(section, 'Observed points', formatCount(impact.count));
+  appendKV(section, 'Unique flights', formatCount(impact.flight_count));
+  appendKV(section, 'Lowest altitude', formatFeet(impact.min_altitude_ft));
+  appendKV(section, 'Latest altitude', formatFeet(impact.latest_altitude_ft));
+  appendKV(section, 'Impact band', impactBandLabel(impact.altitude_severity));
+  appendKV(section, 'Latest observed', formatPanelTime(impact.last_observed_at));
+  panelEl.appendChild(section);
+}
+
+function formatCount(value: unknown): string {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number).toLocaleString('en-US') : '0';
+}
+
+function formatFeet(value: unknown): string {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number).toLocaleString('en-US')} ft` : '\u2014';
+}
+
+function formatPanelTime(value: unknown): string {
+  if (typeof value !== 'string') return '\u2014';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '\u2014';
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
+function impactBandLabel(value: unknown): string {
+  if (value === 'low') return 'low altitude';
+  if (value === 'medium') return 'under 5,000 ft';
+  if (value === 'elevated') return 'under 10,000 ft';
+  if (value === 'subtle') return '10,000+ ft';
+  return 'unknown';
+}
+
+document.addEventListener('parcel-overflights-updated', () => {
+  if (lastPanelProps) renderPanel(lastPanelProps);
+});
 
 // --- Map click → panel --------------------------------------------------
 

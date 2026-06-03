@@ -61,19 +61,61 @@ type FlightSummariesPayload = {
   summaries: FlightSummary[];
 };
 
+type ParcelImpactSeverity = 'low' | 'medium' | 'elevated' | 'subtle' | 'unknown';
+
+export type ParcelOverflightImpact = {
+  parcel_id?: string | null;
+  source_pin?: string | null;
+  count?: number | null;
+  flight_count?: number | null;
+  under_2500_count?: number | null;
+  under_5000_count?: number | null;
+  under_10000_count?: number | null;
+  over_10000_count?: number | null;
+  min_altitude_ft?: number | null;
+  max_altitude_ft?: number | null;
+  latest_altitude_ft?: number | null;
+  latest_altitude_band_ft?: string | null;
+  altitude_severity?: ParcelImpactSeverity | string | null;
+  impact_score?: number | null;
+  first_observed_at?: string | null;
+  last_observed_at?: string | null;
+  latest_flight?: string | null;
+  latest_aircraft_hex?: string | null;
+};
+
 const ADSB_SOURCES = {
   aircraft: { id: 'adsb-aircraft-source', url: publicAssetUrl('adsb/live-aircraft.geojson') },
   trails: { id: 'adsb-trails-source', url: publicAssetUrl('adsb/live-trails.geojson') },
   corridors: { id: 'adsb-corridors-source', url: publicAssetUrl('adsb/corridor-markers.geojson') },
   accumulated: { id: 'adsb-accumulated-source', url: publicAssetUrl('adsb/accumulated-corridors.geojson') },
+  parcelOverflights: { id: 'adsb-parcel-overflights', url: publicAssetUrl('adsb/parcel-overflights.geojson') },
 } as const;
 
 const FLIGHT_SUMMARIES_URL = publicAssetUrl('adsb/flight-summaries.json');
 const LIVE_REFRESH_MS = 1000;
 const ACCUMULATED_REFRESH_MS = 5 * 60 * 1000;
+const PARCEL_IMPACT_SEVERITIES: ParcelImpactSeverity[] = ['low', 'medium', 'elevated', 'subtle', 'unknown'];
+const PARCEL_IMPACT_STYLES: Record<
+  ParcelImpactSeverity,
+  { fill: string; line: string; opacity: number; maxOpacity: number; lineOpacity: number }
+> = {
+  low: { fill: '#dc2626', line: '#991b1b', opacity: 0.32, maxOpacity: 0.48, lineOpacity: 0.76 },
+  medium: { fill: '#f97316', line: '#c2410c', opacity: 0.24, maxOpacity: 0.36, lineOpacity: 0.64 },
+  elevated: { fill: '#facc15', line: '#a16207', opacity: 0.16, maxOpacity: 0.26, lineOpacity: 0.52 },
+  subtle: { fill: '#38bdf8', line: '#0284c7', opacity: 0.07, maxOpacity: 0.14, lineOpacity: 0.32 },
+  unknown: { fill: '#94a3b8', line: '#475569', opacity: 0.12, maxOpacity: 0.2, lineOpacity: 0.38 },
+};
 
 let selectedFlightFacet = 'all';
 let lastFlightPayload: FlightSummariesPayload | null = null;
+const adsbRefreshStarted = new WeakSet<maplibregl.Map>();
+const parcelOverflightByPin = new Map<string, ParcelOverflightImpact>();
+
+export function getParcelOverflightImpact(pin: string | null | undefined): ParcelOverflightImpact | null {
+  const normalized = normalizePin(pin);
+  return normalized ? parcelOverflightByPin.get(normalized) ?? null : null;
+}
 
 export function initMap(containerId: string): maplibregl.Map {
   // Register the pmtiles:// protocol with MapLibre.
@@ -109,12 +151,14 @@ export function initMap(containerId: string): maplibregl.Map {
 
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
   map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-left');
+  startAdsbRefresh(map);
 
   map.on('load', () => {
     console.log('[Map] Loaded. Adding parcels source and layers...');
     map.addSource('parcels', {
       type: 'vector',
       url: `pmtiles://${PMTILES_URL}`,
+      promoteId: { parcels: 'pin' },
     });
 
     map.on('sourcedata', (e) => {
@@ -145,6 +189,7 @@ export function initMap(containerId: string): maplibregl.Map {
       },
     });
 
+    addParcelImpactLayers(map);
     addAdsbLayers(map);
 
     map.addLayer({
@@ -168,6 +213,46 @@ export function initMap(containerId: string): maplibregl.Map {
 export function highlightParcel(map: maplibregl.Map, pin: string | null): void {
   if (!map.getLayer('parcels-highlight')) return;
   map.setFilter('parcels-highlight', ['==', ['get', 'pin'], pin ?? '___none___']);
+}
+
+function addParcelImpactLayers(map: maplibregl.Map): void {
+  for (const severity of PARCEL_IMPACT_SEVERITIES) {
+    const style = PARCEL_IMPACT_STYLES[severity];
+    map.addLayer({
+      id: parcelImpactFillLayerId(severity),
+      type: 'fill',
+      source: 'parcels',
+      'source-layer': 'parcels',
+      paint: {
+        'fill-color': style.fill,
+        'fill-opacity': [
+          'interpolate',
+          ['linear'],
+          ['coalesce', ['feature-state', 'overflightCount'], 1],
+          1,
+          style.opacity,
+          10,
+          Math.min(style.maxOpacity, style.opacity + 0.05),
+          50,
+          style.maxOpacity,
+        ],
+      },
+      filter: parcelPinFilter([]),
+    });
+
+    map.addLayer({
+      id: parcelImpactLineLayerId(severity),
+      type: 'line',
+      source: 'parcels',
+      'source-layer': 'parcels',
+      paint: {
+        'line-color': style.line,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.35, 14, 0.9, 17, 1.6, 19, 2.3],
+        'line-opacity': style.lineOpacity,
+      },
+      filter: parcelPinFilter([]),
+    });
+  }
 }
 
 function addAdsbLayers(map: maplibregl.Map): void {
@@ -361,6 +446,14 @@ function addAdsbLayers(map: maplibregl.Map): void {
     });
   }
 
+  void refreshAdsbSources(map);
+  void refreshAccumulatedAdsbLayer(map);
+}
+
+function startAdsbRefresh(map: maplibregl.Map): void {
+  if (adsbRefreshStarted.has(map)) return;
+  adsbRefreshStarted.add(map);
+
   const refreshLive = () => {
     void refreshAdsbSources(map);
   };
@@ -375,21 +468,24 @@ function addAdsbLayers(map: maplibregl.Map): void {
 
 async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {
   try {
-    const [aircraft, trails, corridors, flightPayload] = await Promise.all([
+    const [aircraft, trails, corridors, parcelOverflights, flightPayload] = await Promise.all([
       fetchFeatureCollection(ADSB_SOURCES.aircraft.url),
       fetchFeatureCollection(ADSB_SOURCES.trails.url),
       fetchFeatureCollection(ADSB_SOURCES.corridors.url),
+      fetchFeatureCollection(ADSB_SOURCES.parcelOverflights.url),
       fetchFlightSummaries(FLIGHT_SUMMARIES_URL),
     ]);
     setGeoJsonSourceData(map, ADSB_SOURCES.aircraft.id, aircraft);
     setGeoJsonSourceData(map, ADSB_SOURCES.trails.id, trails);
     setGeoJsonSourceData(map, ADSB_SOURCES.corridors.id, corridors);
+    updateParcelImpactLayers(map, parcelOverflights);
     updateAdsbStatus(aircraft.features.length, trails.features.length);
-    renderAdsbLivePanel(aircraft, trails, corridors, flightPayload.updated_at);
+    renderAdsbLivePanel(aircraft, trails, corridors, parcelOverflights, flightPayload.updated_at);
     renderFlightWatch(flightPayload);
   } catch (error) {
     updateAdsbStatus(null, null);
-    renderAdsbLivePanel(null, null, null);
+    updateParcelImpactLayers(map, EMPTY_FEATURE_COLLECTION);
+    renderAdsbLivePanel(null, null, null, null);
     renderFlightWatch(null);
     console.warn('[ADS-B] live layer refresh failed:', error);
   }
@@ -436,6 +532,71 @@ function setGeoJsonSourceData(
   source?.setData(data);
 }
 
+function updateParcelImpactLayers(map: maplibregl.Map, parcelOverflights: GeoJSON.FeatureCollection): void {
+  const pinsBySeverity = new Map<ParcelImpactSeverity, string[]>(
+    PARCEL_IMPACT_SEVERITIES.map((severity) => [severity, []])
+  );
+  parcelOverflightByPin.clear();
+
+  for (const feature of parcelOverflights.features) {
+    const properties = (feature.properties ?? {}) as ParcelOverflightImpact;
+    const pin = normalizePin(properties.source_pin ?? properties.parcel_id);
+    if (!pin) continue;
+
+    const severity = normalizeSeverity(properties.altitude_severity);
+    parcelOverflightByPin.set(pin, { ...properties, source_pin: pin });
+    pinsBySeverity.get(severity)?.push(pin);
+    try {
+      map.setFeatureState(
+        { source: 'parcels', sourceLayer: 'parcels', id: pin },
+        {
+          hasOverflight: true,
+          overflightCount: Number(properties.count ?? 1),
+          impactScore: Number(properties.impact_score ?? 0),
+          altitudeSeverity: severity,
+        }
+      );
+    } catch {
+      // Feature state is opportunistic; filters still mark impacted parcels.
+    }
+  }
+
+  for (const severity of PARCEL_IMPACT_SEVERITIES) {
+    const pins = pinsBySeverity.get(severity) ?? [];
+    const fillLayer = parcelImpactFillLayerId(severity);
+    const lineLayer = parcelImpactLineLayerId(severity);
+    if (map.getLayer(fillLayer)) map.setFilter(fillLayer, parcelPinFilter(pins));
+    if (map.getLayer(lineLayer)) map.setFilter(lineLayer, parcelPinFilter(pins));
+  }
+
+  document.dispatchEvent(new CustomEvent('parcel-overflights-updated'));
+}
+
+function parcelPinFilter(pins: string[]): maplibregl.FilterSpecification {
+  if (!pins.length) return ['==', ['get', 'pin'], '___none___'] as maplibregl.FilterSpecification;
+  return ['in', ['get', 'pin'], ['literal', pins]] as maplibregl.FilterSpecification;
+}
+
+function parcelImpactFillLayerId(severity: ParcelImpactSeverity): string {
+  return `parcels-overflight-${severity}-fill`;
+}
+
+function parcelImpactLineLayerId(severity: ParcelImpactSeverity): string {
+  return `parcels-overflight-${severity}-line`;
+}
+
+function normalizePin(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const pin = String(value).trim();
+  return pin || null;
+}
+
+function normalizeSeverity(value: unknown): ParcelImpactSeverity {
+  return PARCEL_IMPACT_SEVERITIES.includes(value as ParcelImpactSeverity)
+    ? (value as ParcelImpactSeverity)
+    : 'unknown';
+}
+
 function updateAdsbStatus(aircraftCount: number | null, trailCount: number | null): void {
   const el = document.getElementById('adsb-status');
   if (!el) return;
@@ -453,6 +614,7 @@ function renderAdsbLivePanel(
   aircraft: GeoJSON.FeatureCollection | null,
   trails: GeoJSON.FeatureCollection | null,
   corridors: GeoJSON.FeatureCollection | null,
+  parcelOverflights: GeoJSON.FeatureCollection | null,
   publishedAt?: string
 ): void {
   const updatedEl = document.getElementById('adsb-live-updated');
@@ -460,7 +622,7 @@ function renderAdsbLivePanel(
   const listEl = document.getElementById('adsb-live-list');
   if (!updatedEl || !summaryEl || !listEl) return;
 
-  if (!aircraft || !trails || !corridors) {
+  if (!aircraft || !trails || !corridors || !parcelOverflights) {
     updatedEl.textContent = 'error';
     summaryEl.textContent = 'Published ADS-B snapshot unavailable.';
     listEl.innerHTML = '';
@@ -473,6 +635,7 @@ function renderAdsbLivePanel(
     <span><strong>${aircraftFeatures.length}</strong> aircraft</span>
     <span><strong>${trails.features.length}</strong> trails</span>
     <span><strong>${corridors.features.length}</strong> corridors</span>
+    <span><strong>${parcelOverflights.features.length}</strong> parcels</span>
   `;
 
   if (!aircraftFeatures.length) {

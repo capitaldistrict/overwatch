@@ -184,7 +184,7 @@ main {
 }
 .adsb-live-summary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.35rem;
   padding: 0.55rem 0.7rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);

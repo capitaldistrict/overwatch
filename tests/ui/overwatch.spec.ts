@@ -5,6 +5,26 @@ const blankPng = Buffer.from(
   'base64'
 );
 
+const parcelOverflightsFixture = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: {
+        parcel_id: '72.6-1-9',
+        source_pin: '72.6-1-9',
+        count: 2,
+        flight_count: 1,
+        min_altitude_ft: 12500,
+        latest_altitude_ft: 12600,
+        altitude_severity: 'subtle',
+        last_observed_at: '2026-06-03T05:45:00Z',
+      },
+      geometry: { type: 'Point', coordinates: [-73.86, 42.8] },
+    },
+  ],
+};
+
 test.describe('desktop layout', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop');
@@ -107,12 +127,21 @@ test.describe('mobile drawer', () => {
     const panel = page.getByTestId('overflight-drawer');
     await expect(panel).toHaveAttribute('data-drawer-state', 'expanded');
     await expect(page.locator('#parcel-detail')).toContainText(/PIN|Parcel ID/);
+    await expect(page.locator('#parcel-detail')).toContainText('Overflights');
+    await expect(page.locator('#parcel-detail')).toContainText('10,000+ ft');
   });
 });
 
 async function loadApp(page: Page) {
   await page.route(/https:\/\/[abc]\.tile\.openstreetmap\.org\/.*/, async (route) => {
     await route.fulfill({ status: 200, contentType: 'image/png', body: blankPng });
+  });
+  await page.route(/\/adsb\/parcel-overflights\.geojson.*/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/geo+json',
+      body: JSON.stringify(parcelOverflightsFixture),
+    });
   });
   await page.goto('/');
   await expect(page.getByTestId('map')).toBeVisible();
