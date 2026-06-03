@@ -1,1 +1,1 @@
-{"features":[{"geometry":{"coordinates":[-72.885,43.495000000000005],"type":"Point"},"properties":{"altitude_band_ft":"10000+","cell_size_degrees":0.01,"count":1,"lat_band":43.49,"lon_band":-72.89,"marker_type":"corridor_band","observed_at":"2026-06-03T06:51:13.200000+00:00","source_type":null,"track_band_deg":60},"type":"Feature"}],"type":"FeatureCollection"}
+{"features":[],"type":"FeatureCollection"}
