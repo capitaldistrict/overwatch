@@ -33,6 +33,30 @@
       <main id="main-shell" data-drawer-state="medium">
         <div id="map-wrap" data-testid="map-wrap">
           <div id="map" aria-label="Map of Niskayuna parcels" data-testid="map"></div>
+          <div id="map-layer-controls" class="map-layer-controls" aria-label="Map layer controls">
+            <button type="button" data-map-layer="impact" aria-pressed="true">Impact</button>
+            <button type="button" data-map-layer="corridors" aria-pressed="true">Corridors</button>
+            <button type="button" data-map-layer="aircraft" aria-pressed="true">Aircraft</button>
+            <button type="button" data-map-layer="parcels" aria-pressed="true">Parcels</button>
+          </div>
+          <div id="mobile-progressive-indicator" class="mobile-progressive-indicator" aria-live="polite">
+            Overview
+          </div>
+          <details id="map-legend" class="map-legend">
+            <summary>Legend</summary>
+            <div class="legend-body">
+              <div class="legend-row"><span class="legend-swatch impact-low"></span><span>under 2,500 ft parcel impact</span></div>
+              <div class="legend-row"><span class="legend-swatch impact-mid"></span><span>2,500–10,000 ft parcel impact</span></div>
+              <div class="legend-row"><span class="legend-swatch impact-high"></span><span>10,000+ ft, low emphasis</span></div>
+              <div class="legend-row"><span class="legend-line corridor-low"></span><span>under-10k corridor band</span></div>
+              <div class="legend-row"><span class="legend-line trail-history"></span><span>recent published track</span></div>
+              <p id="map-legend-updated">Waiting for published snapshot.</p>
+            </div>
+          </details>
+          <div id="map-focus-banner" class="map-focus-banner" hidden>
+            <span id="map-focus-label">Focused flight</span>
+            <button type="button" data-clear-flight-focus>Show all</button>
+          </div>
           <section id="adsb-live-panel" class="adsb-live-panel" aria-live="polite">
             <div class="adsb-live-head">
               <span>Published ADS-B</span>
@@ -41,12 +65,11 @@
             <div class="adsb-refresh-controls" aria-label="ADS-B refresh controls">
               <div class="adsb-refresh-mode" role="group" aria-label="ADS-B refresh mode">
                 <button id="adsb-refresh-snapshot" type="button" aria-pressed="true">Snapshot 60s</button>
-                <button id="adsb-refresh-live" type="button" aria-pressed="false">Live</button>
+                <button id="adsb-refresh-monitor" type="button" aria-pressed="false">Monitor</button>
               </div>
               <label class="adsb-refresh-rate">
-                <span class="sr-only">Live refresh interval</span>
-                <select id="adsb-refresh-rate" aria-label="Live refresh interval">
-                  <option value="1000">1s</option>
+                <span class="sr-only">Monitor refresh interval</span>
+                <select id="adsb-refresh-rate" aria-label="Monitor refresh interval">
                   <option value="5000" selected>5s</option>
                   <option value="15000">15s</option>
                   <option value="30000">30s</option>
@@ -54,6 +77,7 @@
                 </select>
               </label>
             </div>
+            <p class="adsb-refresh-note">Monitor polls the latest published files; public snapshots change after publishing.</p>
             <div id="adsb-live-summary" class="adsb-live-summary">No published aircraft yet.</div>
             <div id="adsb-live-list" class="adsb-live-list"></div>
           </section>
@@ -84,7 +108,12 @@
                 <p id="flight-watch-updated">waiting</p>
                 <p class="flight-watch-note">Static site; updates after the next published snapshot.</p>
               </div>
-              <div id="flight-watch-mode" class="flight-watch-mode">snapshot</div>
+              <div class="flight-watch-actions">
+                <button id="flight-focus-clear" class="flight-focus-clear" type="button" data-clear-flight-focus hidden>
+                  Show all
+                </button>
+                <div id="flight-watch-mode" class="flight-watch-mode">snapshot</div>
+              </div>
             </div>
             <div id="flight-watch-facets" class="flight-watch-facets"></div>
             <div id="flight-watch-list" class="flight-watch-list">

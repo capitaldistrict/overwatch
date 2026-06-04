@@ -7,7 +7,7 @@ Static Niskayuna parcel and ADS-B overflight viewer. The repository is scoped to
 - `src/` - Vite + TypeScript app code.
 - `public/parcels.pmtiles` - parcel vector tiles.
 - `public/indexes/` - address, PIN, owner, and parcel identity search indexes.
-- `public/adsb/` - static ADS-B snapshot files consumed by the live, accumulated, and flight watch layers.
+- `public/adsb/` - static ADS-B snapshot files consumed by the current aircraft, accumulated corridor, and flight watch layers.
 - `docs/` - generated static site for GitHub Pages when you run `npm run build`.
 
 Generated folders such as `node_modules/` are ignored. Raw PDFs, CSV/XLSX extracts, caches, logs, and scraping/collection scripts stay outside this publish repo.

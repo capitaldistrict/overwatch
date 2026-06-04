@@ -25,6 +25,81 @@ const parcelOverflightsFixture = {
   ],
 };
 
+const flightSummariesFixture = {
+  updated_at: '2026-06-03T22:30:00Z',
+  active_count: 2,
+  geobounds_count: 1,
+  property_hit_count: 1,
+  summaries: [
+    {
+      active: true,
+      aircraft_class: 'general aviation',
+      aircraft_hex: 'A90802',
+      aircraft_type: 'C172',
+      altitude_band_ft: '0-2499',
+      altitude_ft: 1975,
+      area: 'niskayuna',
+      flight: 'N681MA',
+      geobounds_hit: true,
+      impact_score: 12,
+      label: 'N681MA',
+      last_observed_at: '2026-06-03T22:30:00Z',
+      persisted: true,
+      point_count: 12,
+      property_hits: 2,
+      speed_kt: 118,
+      track_deg: 18,
+      track_key: 'hex:A90802',
+      sparkline: {
+        altitude_ft: [2100, 2050, 1975],
+        speed_kt: [112, 116, 118],
+        property_hits: [0, 1, 2],
+      },
+    },
+    {
+      active: true,
+      aircraft_class: 'commercial',
+      aircraft_hex: 'A537B2',
+      aircraft_type: 'B737',
+      altitude_band_ft: '10000+',
+      altitude_ft: 40000,
+      area: 'corridor',
+      flight: 'SWA3974',
+      geobounds_hit: false,
+      impact_score: 4,
+      label: 'SWA3974',
+      last_observed_at: '2026-06-03T22:29:00Z',
+      persisted: false,
+      point_count: 4,
+      property_hits: 0,
+      speed_kt: 437,
+      track_deg: 270,
+      track_key: 'hex:A537B2',
+      sparkline: {
+        altitude_ft: [40000, 40000, 40000],
+        speed_kt: [436, 437, 437],
+        property_hits: [0, 0, 0],
+      },
+    },
+    {
+      active: false,
+      aircraft_class: 'unknown',
+      aircraft_hex: 'BEE123',
+      altitude_band_ft: '10000+',
+      altitude_ft: 18000,
+      area: 'corridor',
+      geobounds_hit: false,
+      impact_score: 1,
+      label: 'BEE123',
+      last_observed_at: '2026-06-03T22:10:00Z',
+      persisted: true,
+      point_count: 1,
+      property_hits: 0,
+      track_key: 'hex:BEE123',
+    },
+  ],
+};
+
 test.describe('desktop layout', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop');
@@ -40,16 +115,40 @@ test.describe('desktop layout', () => {
     expect(panelBox.x).toBeGreaterThan(mapBox.x + mapBox.width - 2);
     await expect(handle).toBeHidden();
     await expect(page.getByText('Static site; updates after the next published snapshot.')).toBeVisible();
+    await expect(page.locator('#map-layer-controls')).toBeVisible();
+    await expect(page.locator('#map-legend')).toBeVisible();
     await expect(page.locator('#adsb-refresh-snapshot')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#adsb-refresh-live')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#adsb-refresh-monitor')).toHaveAttribute('aria-pressed', 'false');
     await expect(page.locator('#adsb-refresh-rate')).toBeDisabled();
+    await expect(page.getByText('Monitor polls the latest published files')).toBeVisible();
 
-    await page.locator('#adsb-refresh-live').click();
-    await expect(page.locator('#adsb-refresh-live')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#adsb-refresh-monitor').click();
+    await expect(page.locator('#adsb-refresh-monitor')).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('#adsb-refresh-rate')).toBeEnabled();
+
+    const corridorsToggle = page.locator('[data-map-layer="corridors"]');
+    await expect(corridorsToggle).toHaveAttribute('aria-pressed', 'true');
+    await corridorsToggle.click();
+    await expect(corridorsToggle).toHaveAttribute('aria-pressed', 'false');
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+  });
+
+  test('focuses a selected flight and exposes the low-altitude facet', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /Low alt/ })).toBeVisible();
+
+    const flight = page.locator('[data-flight-key="hex:A90802"]').first();
+    await expect(flight).toBeVisible();
+    await flight.click();
+
+    await expect(flight).toHaveClass(/selected/);
+    await expect(page.locator('#map-focus-banner')).toBeVisible();
+    await expect(page.locator('#map-focus-banner')).toContainText('N681MA');
+    await expect(page.locator('#flight-focus-clear')).toBeVisible();
+
+    await page.locator('#flight-focus-clear').click();
+    await expect(page.locator('#map-focus-banner')).toBeHidden();
   });
 });
 
@@ -65,15 +164,23 @@ test.describe('mobile drawer', () => {
 
     const panel = page.getByTestId('overflight-drawer');
     const livePanel = page.locator('#adsb-live-panel');
+    const progressiveIndicator = page.locator('#mobile-progressive-indicator');
     const panelBox = await box(panel);
     const liveBox = await box(livePanel);
+    const layerControlsBox = await box(page.locator('#map-layer-controls'));
 
     await expect(panel).toHaveAttribute('data-drawer-state', 'medium');
     await expect(page.getByTestId('drawer-handle')).toBeVisible();
+    await expect(progressiveIndicator).toBeVisible();
+    await expect(progressiveIndicator).toContainText(/Overview|Corridors|Impact|Parcel detail/);
     expect(panelBox.width).toBeCloseTo(viewport!.width, 1);
     expect(panelBox.height).toBeGreaterThan(250);
     expect(panelBox.height).toBeLessThan(330);
+    expect(layerControlsBox.width).toBeLessThan(viewport!.width - 58);
     expect(liveBox.y + liveBox.height).toBeLessThanOrEqual(panelBox.y + 2);
+    expect(liveBox.height).toBeLessThan(76);
+    await expect(page.locator('.adsb-refresh-controls')).toBeHidden();
+    await expect(page.locator('#adsb-live-list')).toBeHidden();
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
@@ -148,6 +255,13 @@ async function loadApp(page: Page) {
       status: 200,
       contentType: 'application/geo+json',
       body: JSON.stringify(parcelOverflightsFixture),
+    });
+  });
+  await page.route(/\/adsb\/flight-summaries\.json.*/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(flightSummariesFixture),
     });
   });
   await page.goto('/');
