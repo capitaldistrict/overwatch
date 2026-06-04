@@ -1,1 +1,1 @@
-{"features":[],"type":"FeatureCollection"}
+{"features":[{"geometry":{"coordinates":[-73.246661,42.700745],"type":"Point"},"properties":{"aircraft_class":"commercial","aircraft_hex":"7380C7","alt_baro_ft":21625.0,"alt_geom_ft":22600.0,"altitude_band_ft":"10000+","area":"corridor","category":"A5","enrichment_sources":["adsb_receiver"],"flight":"ELY027","ground_speed_kt":390.1,"observed_at":"2026-06-04T08:10:26+00:00","seen_sec":0.0,"track_deg":215.4},"type":"Feature"}],"type":"FeatureCollection"}
