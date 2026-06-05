@@ -62,6 +62,7 @@ The current ADS-B files expected by the app are:
 
 - `public/adsb/live-aircraft.geojson`
 - `public/adsb/live-trails.geojson`
+- `public/adsb/historical-routes.geojson`
 - `public/adsb/corridor-markers.geojson`
 - `public/adsb/accumulated-corridors.geojson`
 - `public/adsb/flight-summaries.json`

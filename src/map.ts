@@ -95,6 +95,7 @@ export type ParcelOverflightImpact = {
 const ADSB_SOURCES = {
   aircraft: { id: 'adsb-aircraft-source', url: publicAssetUrl('adsb/live-aircraft.geojson') },
   trails: { id: 'adsb-trails-source', url: publicAssetUrl('adsb/live-trails.geojson') },
+  historicalRoutes: { id: 'adsb-historical-routes-source', url: publicAssetUrl('adsb/historical-routes.geojson') },
   corridors: { id: 'adsb-corridors-source', url: publicAssetUrl('adsb/corridor-markers.geojson') },
   accumulated: { id: 'adsb-accumulated-source', url: publicAssetUrl('adsb/accumulated-corridors.geojson') },
   lowAltitudeBands: {
@@ -354,7 +355,7 @@ function applyLayerGroupVisibility(map: maplibregl.Map): void {
 
 function layerIdsForGroup(group: MapLayerGroup): string[] {
   if (group === 'routes') {
-    return ['adsb-trails-casing', 'adsb-trails'];
+    return ['adsb-historical-routes-casing', 'adsb-historical-routes', 'adsb-trails-casing', 'adsb-trails'];
   }
   if (group === 'impact') {
     return [
@@ -409,6 +410,8 @@ function applyProgressiveZoomRanges(map: maplibregl.Map): void {
   setRange('adsb-low-altitude-corridor-bands-line', PROGRESSIVE_ZOOM.lowAltitudeBands);
   setRange('adsb-accumulated-corridors', PROGRESSIVE_ZOOM.corridorMarkers);
   setRange('adsb-corridors', PROGRESSIVE_ZOOM.corridorMarkers);
+  setRange('adsb-historical-routes-casing', 0);
+  setRange('adsb-historical-routes', 0);
   setRange('adsb-trails-casing', 0);
   setRange('adsb-trails', 0);
   setRange('adsb-aircraft', 0);
@@ -451,6 +454,18 @@ function applyFocusPaint(map: maplibregl.Map): void {
   const selectedKey = mapUiState.selectedFlightKey;
   const selectedExpression = selectedKey ? selectedFlightExpression(selectedKey) : null;
 
+  setPaintIfLayer(map, 'adsb-historical-routes-casing', 'line-opacity', selectedExpression
+    ? ['case', selectedExpression, 0.3, 0.02]
+    : historicalRouteCasingOpacityExpression());
+  setPaintIfLayer(map, 'adsb-historical-routes-casing', 'line-width', selectedExpression
+    ? ['case', selectedExpression, selectedTrailCasingWidthExpression(), dimTrailCasingWidthExpression()]
+    : historicalRouteCasingWidthExpression());
+  setPaintIfLayer(map, 'adsb-historical-routes', 'line-opacity', selectedExpression
+    ? ['case', selectedExpression, 0.78, 0.035]
+    : historicalRouteOpacityExpression());
+  setPaintIfLayer(map, 'adsb-historical-routes', 'line-width', selectedExpression
+    ? ['case', selectedExpression, selectedTrailWidthExpression(), dimTrailWidthExpression()]
+    : historicalRouteWidthExpression());
   setPaintIfLayer(map, 'adsb-trails-casing', 'line-opacity', selectedExpression
     ? ['case', selectedExpression, 0.38, 0.035]
     : trailCasingOpacityExpression());
@@ -685,6 +700,10 @@ function addAdsbLayers(map: maplibregl.Map): void {
     type: 'geojson',
     data: EMPTY_FEATURE_COLLECTION,
   });
+  map.addSource(ADSB_SOURCES.historicalRoutes.id, {
+    type: 'geojson',
+    data: EMPTY_FEATURE_COLLECTION,
+  });
   map.addSource(ADSB_SOURCES.aircraft.id, {
     type: 'geojson',
     data: EMPTY_FEATURE_COLLECTION,
@@ -784,6 +803,41 @@ function addAdsbLayers(map: maplibregl.Map): void {
       'circle-stroke-opacity': 0.24,
     },
     filter: under10000AltitudeFilter(),
+  });
+
+  map.addLayer({
+    id: 'adsb-historical-routes-casing',
+    type: 'line',
+    source: ADSB_SOURCES.historicalRoutes.id,
+    paint: {
+      'line-color': '#0f172a',
+      'line-width': historicalRouteCasingWidthExpression(),
+      'line-opacity': historicalRouteCasingOpacityExpression(),
+      'line-blur': ['interpolate', ['linear'], ['zoom'], 8, 0.25, 14, 0.55, 17, 0.8],
+    },
+  });
+
+  map.addLayer({
+    id: 'adsb-historical-routes',
+    type: 'line',
+    source: ADSB_SOURCES.historicalRoutes.id,
+    paint: {
+      'line-color': [
+        'match',
+        ['get', 'altitude_band_ft'],
+        '0-2499',
+        '#b91c1c',
+        '2500-4999',
+        '#ea580c',
+        '5000-9999',
+        '#ca8a04',
+        '10000+',
+        '#0284c7',
+        '#64748b',
+      ],
+      'line-width': historicalRouteWidthExpression(),
+      'line-opacity': historicalRouteOpacityExpression(),
+    },
   });
 
   map.addLayer({
@@ -911,6 +965,11 @@ function addAdsbLayers(map: maplibregl.Map): void {
     if (!feature) return;
     focusFlightFromProperties(feature.properties ?? {});
   });
+  map.on('click', 'adsb-historical-routes', (event) => {
+    const feature = event.features?.[0];
+    if (!feature) return;
+    focusFlightFromProperties(feature.properties ?? {});
+  });
 
   map.on('click', 'adsb-accumulated-corridors', (event) => {
     const feature = event.features?.[0];
@@ -952,6 +1011,7 @@ function addAdsbLayers(map: maplibregl.Map): void {
     map.getCanvas().style.cursor = '';
   });
   bindHoverPopup('adsb-trails', renderRouteHoverPopup);
+  bindHoverPopup('adsb-historical-routes', renderRouteHoverPopup);
   bindHoverPopup('adsb-accumulated-corridors', (properties) =>
     renderCorridorPopup(properties, 'Accumulated route band')
   );
@@ -1100,12 +1160,14 @@ async function refreshAdsbSources(map: maplibregl.Map): Promise<void> {
 
 async function refreshAccumulatedAdsbLayer(map: maplibregl.Map): Promise<void> {
   try {
-    const [accumulated, lowAltitudeBands] = await Promise.all([
+    const [accumulated, lowAltitudeBands, historicalRoutes] = await Promise.all([
       fetchFeatureCollection(ADSB_SOURCES.accumulated.url),
       fetchFeatureCollection(ADSB_SOURCES.lowAltitudeBands.url),
+      fetchFeatureCollection(ADSB_SOURCES.historicalRoutes.url),
     ]);
     setGeoJsonSourceData(map, ADSB_SOURCES.accumulated.id, accumulated);
     setGeoJsonSourceData(map, ADSB_SOURCES.lowAltitudeBands.id, lowAltitudeBands);
+    setGeoJsonSourceData(map, ADSB_SOURCES.historicalRoutes.id, historicalRoutes);
   } catch (error) {
     console.warn('[ADS-B] accumulated layer refresh failed:', error);
   }
@@ -1269,6 +1331,71 @@ function liveCorridorOpacityExpression(focused: boolean): any {
   ];
 }
 
+function altitudeBandCase(highAltitudeValue: number, lowerAltitudeValue: number): any[] {
+  return [
+    'case',
+    ['==', ['get', 'altitude_band_ft'], '10000+'],
+    highAltitudeValue,
+    lowerAltitudeValue,
+  ];
+}
+
+function historicalRouteOpacityExpression(): any {
+  return [
+    'interpolate',
+    ['linear'],
+    ['coalesce', ['get', 'impact_score'], ['get', 'point_count'], 1],
+    1,
+    altitudeBandCase(0.1, 0.28),
+    20,
+    altitudeBandCase(0.16, 0.42),
+    80,
+    altitudeBandCase(0.24, 0.58),
+  ];
+}
+
+function historicalRouteWidthExpression(): any {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    8,
+    altitudeBandCase(0.38, 0.68),
+    13,
+    altitudeBandCase(0.8, 1.45),
+    17,
+    altitudeBandCase(1.15, 2.45),
+  ];
+}
+
+function historicalRouteCasingOpacityExpression(): any {
+  return [
+    'interpolate',
+    ['linear'],
+    ['coalesce', ['get', 'impact_score'], ['get', 'point_count'], 1],
+    1,
+    altitudeBandCase(0.04, 0.12),
+    20,
+    altitudeBandCase(0.07, 0.19),
+    80,
+    altitudeBandCase(0.1, 0.27),
+  ];
+}
+
+function historicalRouteCasingWidthExpression(): any {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    8,
+    altitudeBandCase(1, 1.35),
+    13,
+    altitudeBandCase(1.7, 2.45),
+    17,
+    altitudeBandCase(2.35, 3.6),
+  ];
+}
+
 function trailOpacityExpression(): any {
   return [
     'match',
@@ -1287,10 +1414,15 @@ function trailOpacityExpression(): any {
 
 function trailWidthExpression(): any {
   return [
-    'case',
-    ['==', ['get', 'altitude_band_ft'], '10000+'],
-    ['interpolate', ['linear'], ['zoom'], 8, 0.65, 13, 1.15, 17, 1.65],
-    ['interpolate', ['linear'], ['zoom'], 8, 1.05, 13, 2.1, 17, 3.35],
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    8,
+    altitudeBandCase(0.65, 1.05),
+    13,
+    altitudeBandCase(1.15, 2.1),
+    17,
+    altitudeBandCase(1.65, 3.35),
   ];
 }
 
@@ -1312,10 +1444,15 @@ function trailCasingOpacityExpression(): any {
 
 function trailCasingWidthExpression(): any {
   return [
-    'case',
-    ['==', ['get', 'altitude_band_ft'], '10000+'],
-    ['interpolate', ['linear'], ['zoom'], 8, 1.4, 13, 2.15, 17, 2.8],
-    ['interpolate', ['linear'], ['zoom'], 8, 1.8, 13, 3.1, 17, 4.55],
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    8,
+    altitudeBandCase(1.4, 1.8),
+    13,
+    altitudeBandCase(2.15, 3.1),
+    17,
+    altitudeBandCase(2.8, 4.55),
   ];
 }
 
@@ -1774,7 +1911,7 @@ function renderRouteHoverPopup(properties: Record<string, unknown>): string {
   const meta = summary ? flightMeta(summary) : String(properties.aircraft_hex || properties.area || 'published route');
   const observed = summary
     ? formatObservedRange(summary.first_observed_at, summary.last_observed_at)
-    : 'published snapshot';
+    : formatObservedRange(stringValue(properties.first_observed_at), stringValue(properties.last_observed_at));
   const altitude = formatOptional(summary?.altitude_ft ?? properties.alt_baro_ft, ' ft');
   const speed = formatOptional(summary?.speed_kt ?? properties.ground_speed_kt, ' kt');
   const points = formatOptional(summary?.point_count ?? properties.point_count, ' pts');
