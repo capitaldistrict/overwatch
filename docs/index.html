@@ -6,8 +6,8 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex" />
     <title>Niskayuna Parcel Viewer</title>
-    <script type="module" crossorigin src="/overwatch/assets/index-QGiKg8QC.js"></script>
-    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-BvaPELD6.css">
+    <script type="module" crossorigin src="/overwatch/assets/index-C6FP1VcO.js"></script>
+    <link rel="stylesheet" crossorigin href="/overwatch/assets/index-DQD0mJ7t.css">
   </head>
   <body>
     <div id="app">
@@ -36,6 +36,7 @@
         <div id="map-wrap" data-testid="map-wrap">
           <div id="map" aria-label="Map of Niskayuna parcels" data-testid="map"></div>
           <div id="map-layer-controls" class="map-layer-controls" aria-label="Map layer controls">
+            <button type="button" data-map-layer="routes" aria-pressed="true">Routes</button>
             <button type="button" data-map-layer="impact" aria-pressed="true">Impact</button>
             <button type="button" data-map-layer="corridors" aria-pressed="true">Corridors</button>
             <button type="button" data-map-layer="aircraft" aria-pressed="true">Aircraft</button>
@@ -51,7 +52,7 @@
               <div class="legend-row"><span class="legend-swatch impact-mid"></span><span>2,500–10,000 ft parcel impact</span></div>
               <div class="legend-row"><span class="legend-swatch impact-high"></span><span>10,000+ ft, low emphasis</span></div>
               <div class="legend-row"><span class="legend-line corridor-low"></span><span>under-10k corridor band</span></div>
-              <div class="legend-row"><span class="legend-line trail-history"></span><span>recent published track</span></div>
+              <div class="legend-row"><span class="legend-line trail-history"></span><span>flight route history</span></div>
               <p id="map-legend-updated">Waiting for published snapshot.</p>
             </div>
           </details>
