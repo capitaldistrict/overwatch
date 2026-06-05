@@ -126,6 +126,13 @@ test.describe('desktop layout', () => {
     await expect(page.locator('#adsb-refresh-monitor')).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('#adsb-refresh-rate')).toBeEnabled();
 
+    const routesToggle = page.locator('[data-map-layer="routes"]');
+    await expect(routesToggle).toHaveAttribute('aria-pressed', 'true');
+    await routesToggle.click();
+    await expect(routesToggle).toHaveAttribute('aria-pressed', 'false');
+    await routesToggle.click();
+    await expect(routesToggle).toHaveAttribute('aria-pressed', 'true');
+
     const corridorsToggle = page.locator('[data-map-layer="corridors"]');
     await expect(corridorsToggle).toHaveAttribute('aria-pressed', 'true');
     await corridorsToggle.click();
@@ -172,7 +179,7 @@ test.describe('mobile drawer', () => {
     await expect(panel).toHaveAttribute('data-drawer-state', 'medium');
     await expect(page.getByTestId('drawer-handle')).toBeVisible();
     await expect(progressiveIndicator).toBeVisible();
-    await expect(progressiveIndicator).toContainText(/Overview|Corridors|Impact|Parcel detail/);
+    await expect(progressiveIndicator).toContainText(/Overview|Routes|Impact|Parcel detail/);
     expect(panelBox.width).toBeCloseTo(viewport!.width, 1);
     expect(panelBox.height).toBeGreaterThan(250);
     expect(panelBox.height).toBeLessThan(330);

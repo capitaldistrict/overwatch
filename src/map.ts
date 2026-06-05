@@ -62,7 +62,7 @@ type FlightSummariesPayload = {
 };
 
 type ParcelImpactSeverity = 'low' | 'medium' | 'elevated' | 'subtle' | 'unknown';
-type MapLayerGroup = 'impact' | 'corridors' | 'aircraft' | 'parcels';
+type MapLayerGroup = 'routes' | 'impact' | 'corridors' | 'aircraft' | 'parcels';
 type AdsbRefreshMode = 'snapshot' | 'monitor';
 
 type MapUiState = {
@@ -125,6 +125,7 @@ const PARCEL_IMPACT_STYLES: Record<
 
 const mapUiState: MapUiState = {
   layers: {
+    routes: true,
     impact: true,
     corridors: true,
     aircraft: true,
@@ -294,7 +295,7 @@ function setupMapUiControls(map: maplibregl.Map): void {
 }
 
 function isMapLayerGroup(value: unknown): value is MapLayerGroup {
-  return value === 'impact' || value === 'corridors' || value === 'aircraft' || value === 'parcels';
+  return value === 'routes' || value === 'impact' || value === 'corridors' || value === 'aircraft' || value === 'parcels';
 }
 
 function applyMapUiState(map: maplibregl.Map): void {
@@ -352,6 +353,9 @@ function applyLayerGroupVisibility(map: maplibregl.Map): void {
 }
 
 function layerIdsForGroup(group: MapLayerGroup): string[] {
+  if (group === 'routes') {
+    return ['adsb-trails-casing', 'adsb-trails'];
+  }
   if (group === 'impact') {
     return [
       ...PARCEL_IMPACT_SEVERITIES.flatMap((severity) => [
@@ -368,7 +372,6 @@ function layerIdsForGroup(group: MapLayerGroup): string[] {
       'adsb-low-altitude-corridor-bands-line',
       'adsb-accumulated-corridors',
       'adsb-corridors',
-      'adsb-trails',
     ];
   }
   if (group === 'aircraft') return ['adsb-aircraft', 'adsb-aircraft-labels'];
@@ -406,6 +409,7 @@ function applyProgressiveZoomRanges(map: maplibregl.Map): void {
   setRange('adsb-low-altitude-corridor-bands-line', PROGRESSIVE_ZOOM.lowAltitudeBands);
   setRange('adsb-accumulated-corridors', PROGRESSIVE_ZOOM.corridorMarkers);
   setRange('adsb-corridors', PROGRESSIVE_ZOOM.corridorMarkers);
+  setRange('adsb-trails-casing', 0);
   setRange('adsb-trails', 0);
   setRange('adsb-aircraft', 0);
   setRange('adsb-aircraft-labels', PROGRESSIVE_ZOOM.aircraftLabels, 9);
@@ -429,9 +433,9 @@ function renderProgressiveIndicator(map: maplibregl.Map): void {
   if (mapUiState.selectedFlightLabel) {
     indicator.textContent = `Focused · ${mapUiState.selectedFlightLabel}`;
   } else if (zoom < PROGRESSIVE_ZOOM.lowAltitudeBands) {
-    indicator.textContent = 'Overview · aircraft + paths';
+    indicator.textContent = 'Overview · routes + aircraft';
   } else if (zoom < PROGRESSIVE_ZOOM.parcelImpact) {
-    indicator.textContent = 'Corridors · low-altitude bands';
+    indicator.textContent = 'Routes · corridor bands';
   } else if (zoom < PROGRESSIVE_ZOOM.parcelDetail) {
     indicator.textContent = 'Impact · parcel signals';
   } else {
@@ -447,6 +451,12 @@ function applyFocusPaint(map: maplibregl.Map): void {
   const selectedKey = mapUiState.selectedFlightKey;
   const selectedExpression = selectedKey ? selectedFlightExpression(selectedKey) : null;
 
+  setPaintIfLayer(map, 'adsb-trails-casing', 'line-opacity', selectedExpression
+    ? ['case', selectedExpression, 0.38, 0.035]
+    : trailCasingOpacityExpression());
+  setPaintIfLayer(map, 'adsb-trails-casing', 'line-width', selectedExpression
+    ? ['case', selectedExpression, selectedTrailCasingWidthExpression(), dimTrailCasingWidthExpression()]
+    : trailCasingWidthExpression());
   setPaintIfLayer(map, 'adsb-trails', 'line-opacity', selectedExpression
     ? ['case', selectedExpression, 0.96, 0.07]
     : trailOpacityExpression());
@@ -777,6 +787,18 @@ function addAdsbLayers(map: maplibregl.Map): void {
   });
 
   map.addLayer({
+    id: 'adsb-trails-casing',
+    type: 'line',
+    source: ADSB_SOURCES.trails.id,
+    paint: {
+      'line-color': '#0f172a',
+      'line-width': trailCasingWidthExpression(),
+      'line-opacity': trailCasingOpacityExpression(),
+      'line-blur': ['interpolate', ['linear'], ['zoom'], 8, 0.2, 14, 0.45, 17, 0.7],
+    },
+  });
+
+  map.addLayer({
     id: 'adsb-trails',
     type: 'line',
     source: ADSB_SOURCES.trails.id,
@@ -844,6 +866,33 @@ function addAdsbLayers(map: maplibregl.Map): void {
     },
   });
 
+  const hoverPopup = new maplibregl.Popup({
+    closeButton: false,
+    closeOnClick: false,
+    className: 'adsb-hover-popup',
+    maxWidth: '18rem',
+    offset: 12,
+  });
+  const showHoverPopup = (event: maplibregl.MapLayerMouseEvent, html: string) => {
+    map.getCanvas().style.cursor = 'pointer';
+    hoverPopup.setLngLat(event.lngLat).setHTML(html).addTo(map);
+  };
+  const clearHoverPopup = () => {
+    map.getCanvas().style.cursor = '';
+    hoverPopup.remove();
+  };
+  const bindHoverPopup = (
+    layerId: string,
+    render: (properties: Record<string, unknown>) => string
+  ) => {
+    map.on('mousemove', layerId, (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      showHoverPopup(event, render(feature.properties ?? {}));
+    });
+    map.on('mouseleave', layerId, clearHoverPopup);
+  };
+
   map.on('click', 'adsb-aircraft', (event) => {
     const feature = event.features?.[0];
     const coordinates = feature?.geometry.type === 'Point'
@@ -902,19 +951,16 @@ function addAdsbLayers(map: maplibregl.Map): void {
   map.on('mouseleave', 'adsb-aircraft', () => {
     map.getCanvas().style.cursor = '';
   });
-  for (const layerId of [
-    'adsb-accumulated-corridors',
-    'adsb-corridors',
-    'adsb-low-altitude-corridor-bands-fill',
-    'adsb-trails',
-  ]) {
-    map.on('mousemove', layerId, () => {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', layerId, () => {
-      map.getCanvas().style.cursor = '';
-    });
-  }
+  bindHoverPopup('adsb-trails', renderRouteHoverPopup);
+  bindHoverPopup('adsb-accumulated-corridors', (properties) =>
+    renderCorridorPopup(properties, 'Accumulated route band')
+  );
+  bindHoverPopup('adsb-corridors', (properties) =>
+    renderCorridorPopup(properties, 'Monitor corridor point')
+  );
+  bindHoverPopup('adsb-low-altitude-corridor-bands-fill', (properties) =>
+    renderCorridorPopup(properties, 'Under 10k corridor band')
+  );
 
   void refreshAdsbSources(map);
   void refreshAccumulatedAdsbLayer(map);
@@ -1228,14 +1274,14 @@ function trailOpacityExpression(): any {
     'match',
     ['get', 'altitude_band_ft'],
     '0-2499',
-    0.74,
+    0.82,
     '2500-4999',
-    0.58,
+    0.66,
     '5000-9999',
-    0.38,
+    0.48,
     '10000+',
-    0.14,
-    0.32,
+    0.24,
+    0.42,
   ];
 }
 
@@ -1243,8 +1289,33 @@ function trailWidthExpression(): any {
   return [
     'case',
     ['==', ['get', 'altitude_band_ft'], '10000+'],
-    ['interpolate', ['linear'], ['zoom'], 9, 0.45, 13, 0.9, 17, 1.3],
-    ['interpolate', ['linear'], ['zoom'], 9, 0.9, 13, 1.8, 17, 3.1],
+    ['interpolate', ['linear'], ['zoom'], 8, 0.65, 13, 1.15, 17, 1.65],
+    ['interpolate', ['linear'], ['zoom'], 8, 1.05, 13, 2.1, 17, 3.35],
+  ];
+}
+
+function trailCasingOpacityExpression(): any {
+  return [
+    'match',
+    ['get', 'altitude_band_ft'],
+    '0-2499',
+    0.34,
+    '2500-4999',
+    0.28,
+    '5000-9999',
+    0.2,
+    '10000+',
+    0.12,
+    0.18,
+  ];
+}
+
+function trailCasingWidthExpression(): any {
+  return [
+    'case',
+    ['==', ['get', 'altitude_band_ft'], '10000+'],
+    ['interpolate', ['linear'], ['zoom'], 8, 1.4, 13, 2.15, 17, 2.8],
+    ['interpolate', ['linear'], ['zoom'], 8, 1.8, 13, 3.1, 17, 4.55],
   ];
 }
 
@@ -1254,6 +1325,14 @@ function selectedTrailWidthExpression(): any {
 
 function dimTrailWidthExpression(): any {
   return ['interpolate', ['linear'], ['zoom'], 9, 0.35, 13, 0.7, 17, 1.1];
+}
+
+function selectedTrailCasingWidthExpression(): any {
+  return ['interpolate', ['linear'], ['zoom'], 9, 2.5, 13, 4, 17, 5.8];
+}
+
+function dimTrailCasingWidthExpression(): any {
+  return ['interpolate', ['linear'], ['zoom'], 9, 1, 13, 1.55, 17, 2.1];
 }
 
 function defaultAircraftRadiusExpression(): any {
@@ -1686,6 +1765,37 @@ function renderAdsbPopup(properties: Record<string, unknown>): string {
   `;
 }
 
+function renderRouteHoverPopup(properties: Record<string, unknown>): string {
+  const key = trackKeyFromProperties(properties);
+  const summary = key ? findSummaryByFlightKey(key) : null;
+  const title = summary
+    ? flightLabel(summary)
+    : String(properties.flight || properties.registration || properties.aircraft_hex || 'Flight route');
+  const meta = summary ? flightMeta(summary) : String(properties.aircraft_hex || properties.area || 'published route');
+  const observed = summary
+    ? formatObservedRange(summary.first_observed_at, summary.last_observed_at)
+    : 'published snapshot';
+  const altitude = formatOptional(summary?.altitude_ft ?? properties.alt_baro_ft, ' ft');
+  const speed = formatOptional(summary?.speed_kt ?? properties.ground_speed_kt, ' kt');
+  const points = formatOptional(summary?.point_count ?? properties.point_count, ' pts');
+  const hits = Math.round(Number(summary?.property_hits ?? 0)).toLocaleString('en-US');
+  const band = String(summary?.altitude_band_ft || properties.altitude_band_ft || 'unknown');
+  const area = String(summary?.area || properties.area || 'corridor');
+
+  return `
+    <div class="adsb-popup adsb-route-popup">
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(meta)}</p>
+      <div><span>Observed</span><span>${escapeHtml(observed)}</span></div>
+      <div><span>Altitude</span><span>${escapeHtml(altitude)}</span></div>
+      <div><span>Speed</span><span>${escapeHtml(speed)}</span></div>
+      <div><span>Band</span><span>${escapeHtml(band)}</span></div>
+      <div><span>Area</span><span>${escapeHtml(area)}</span></div>
+      <div><span>History</span><span>${escapeHtml(points)} · ${escapeHtml(hits)} hits</span></div>
+    </div>
+  `;
+}
+
 function renderCorridorPopup(properties: Record<string, unknown>, title: string): string {
   const count = formatOptional(properties.count, '');
   const impact = formatOptional(properties.impact_score, '');
@@ -1693,16 +1803,61 @@ function renderCorridorPopup(properties: Record<string, unknown>, title: string)
   const band = String(properties.altitude_band_ft || 'unknown');
   const cellSize = Number(properties.cell_size_degrees);
   const cellLabel = Number.isFinite(cellSize) ? `${cellSize.toFixed(4)} deg` : 'band';
+  const observed = formatObservedRange(
+    stringValue(properties.first_observed_at),
+    stringValue(properties.last_observed_at || properties.observed_at)
+  );
   return `
     <div class="adsb-popup">
       <strong>${escapeHtml(title)}</strong>
       <div><span>Type</span><span>${escapeHtml(proximity)}</span></div>
+      <div><span>Observed</span><span>${escapeHtml(observed)}</span></div>
       <div><span>Cell</span><span>${escapeHtml(cellLabel)}</span></div>
       <div><span>Altitude</span><span>${escapeHtml(band)}</span></div>
       <div><span>Count</span><span>${escapeHtml(count)}</span></div>
       <div><span>Impact</span><span>${escapeHtml(impact)}</span></div>
     </div>
   `;
+}
+
+function formatObservedRange(startValue: string | null | undefined, endValue: string | null | undefined): string {
+  const start = parseDate(startValue);
+  const end = parseDate(endValue);
+  if (start && end) {
+    if (sameLocalDate(start, end)) {
+      return `${formatShortDate(start)} ${formatShortClock(start)}-${formatShortClock(end)}`;
+    }
+    return `${formatShortDateTime(start)}-${formatShortDateTime(end)}`;
+  }
+  if (start) return formatShortDateTime(start);
+  if (end) return formatShortDateTime(end);
+  return 'unknown';
+}
+
+function parseDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function sameLocalDate(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function formatShortDateTime(date: Date): string {
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function formatShortDate(date: Date): string {
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatShortClock(date: Date): string {
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 function formatOptional(value: unknown, unit: string): string {
